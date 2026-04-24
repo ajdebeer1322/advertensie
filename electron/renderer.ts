@@ -1,0 +1,371 @@
+import sharp from 'sharp';
+import * as fs from 'fs';
+import * as path from 'path';
+import type { AppSettings, Box } from './settings';
+
+export interface RenderInput {
+  settings: AppSettings;
+  productImagePath: string;
+  description: string;
+  price: string;
+  /** Optional font file paths loaded into @font-face inside the SVG. */
+  embeddedFonts?: { family: string; file: string }[];
+}
+
+export interface RenderResult {
+  buffer: Buffer;
+  format: 'png' | 'jpg';
+}
+
+/** Main composition. Layers in order:
+ * 1. Base product image (fit into productBox)
+ * 2. Header overlay
+ * 3. Description overlay
+ * 4. Price overlay
+ * 5. Description text (SVG)
+ * 6. Price text (SVG)
+ */
+export async function renderAd(input: RenderInput): Promise<RenderResult> {
+  const { settings, productImagePath } = input;
+  const W = settings.canvasWidth;
+  const H = settings.canvasHeight;
+
+  // White base canvas
+  const base = sharp({
+    create: {
+      width: W,
+      height: H,
+      channels: 4,
+      background: { r: 255, g: 255, b: 255, alpha: 1 },
+    },
+  });
+
+  const composites: sharp.OverlayOptions[] = [];
+
+  const addLayer = async (buf: Buffer, box: Box) => {
+    const clipped = await clipToCanvas(buf, box, W, H);
+    if (clipped) composites.push({ input: clipped.buffer, left: clipped.left, top: clipped.top });
+  };
+
+  // Product image fit into productBox
+  if (fs.existsSync(productImagePath)) {
+    const fitted = await sharp(productImagePath)
+      .resize(Math.max(1, settings.productBox.width), Math.max(1, settings.productBox.height), {
+        fit: 'cover',
+        position: 'centre',
+      })
+      .png()
+      .toBuffer();
+    await addLayer(fitted, settings.productBox);
+  }
+
+  // Overlays
+  const overlaySteps: { file: string; box: Box }[] = [
+    { file: settings.headerOverlay, box: settings.headerBox },
+    { file: settings.descriptionOverlay, box: settings.descriptionBox },
+    { file: settings.priceOverlay, box: settings.priceBox },
+  ];
+  for (const s of overlaySteps) {
+    if (s.file && fs.existsSync(s.file)) {
+      const buf = await sharp(s.file)
+        .resize(Math.max(1, s.box.width), Math.max(1, s.box.height), {
+          fit: 'contain',
+          background: { r: 0, g: 0, b: 0, alpha: 0 },
+        })
+        .png()
+        .toBuffer();
+      await addLayer(buf, s.box);
+    }
+  }
+
+  // Description text
+  const descText = formatDescription(input.description, settings);
+  if (descText) {
+    const svg = buildTextSvg({
+      text: descText,
+      box: settings.descriptionTextBox,
+      font: settings.descriptionFont,
+      fontSize: settings.descriptionFontSize,
+      lineHeight: settings.descriptionLineHeight,
+      letterSpacing: settings.descriptionLetterSpacing,
+      color: settings.descriptionColor,
+      stroke: settings.descriptionStroke,
+      strokeWidth: settings.descriptionStrokeWidth,
+      shadow: settings.descriptionShadow,
+      align: settings.descriptionAlign,
+      bold: settings.descriptionBold,
+      maxLines: settings.descriptionMaxLines,
+      autoFit: settings.descriptionAutoFit,
+      ellipsis: settings.descriptionEllipsis,
+      embeddedFonts: input.embeddedFonts || [],
+    });
+    // Rasterize SVG so we can clip it if it extends past canvas
+    const rasterized = await sharp(Buffer.from(svg)).png().toBuffer();
+    await addLayer(rasterized, settings.descriptionTextBox);
+  }
+
+  // Price text
+  const priceText = formatPrice(input.price, settings);
+  if (priceText) {
+    const svg = buildTextSvg({
+      text: priceText,
+      box: settings.priceTextBox,
+      font: settings.priceFont,
+      fontSize: settings.priceFontSize,
+      lineHeight: settings.priceLineHeight,
+      letterSpacing: settings.priceLetterSpacing,
+      color: settings.priceColor,
+      stroke: settings.priceStroke,
+      strokeWidth: settings.priceStrokeWidth,
+      shadow: settings.priceShadow,
+      align: settings.priceAlign,
+      bold: settings.priceBold,
+      maxLines: 3,
+      autoFit: true,
+      ellipsis: false,
+      embeddedFonts: input.embeddedFonts || [],
+    });
+    const rasterized = await sharp(Buffer.from(svg)).png().toBuffer();
+    await addLayer(rasterized, settings.priceTextBox);
+  }
+
+  const pipeline = base.composite(composites);
+
+  let buffer: Buffer;
+  if (settings.exportFormat === 'jpg') {
+    buffer = await pipeline.jpeg({ quality: settings.exportQuality }).toBuffer();
+  } else {
+    buffer = await pipeline.png().toBuffer();
+  }
+  return { buffer, format: settings.exportFormat };
+}
+
+/** Expand `\n` escape sequences into actual newlines, and normalize CRLF. */
+function normalizeBreaks(s: string): string {
+  return s.replace(/\r\n/g, '\n').replace(/\\n/g, '\n');
+}
+
+function formatDescription(text: string, s: AppSettings): string {
+  if (!text) return '';
+  const t = normalizeBreaks(text);
+  return s.descriptionUppercase ? t.toUpperCase() : t;
+}
+
+function formatPrice(price: string, s: AppSettings): string {
+  if (!price) return '';
+  const fmt = normalizeBreaks(s.priceFormat || '{price}');
+  return fmt.replace('{price}', String(price));
+}
+
+interface TextOpts {
+  text: string;
+  box: Box;
+  font: string;
+  fontSize: number;
+  lineHeight: number;
+  letterSpacing: number;
+  color: string;
+  stroke: string;
+  strokeWidth: number;
+  shadow: boolean;
+  align: 'left' | 'center' | 'right';
+  bold: boolean;
+  maxLines: number;
+  autoFit: boolean;
+  ellipsis: boolean;
+  embeddedFonts: { family: string; file: string }[];
+}
+
+/** Build an SVG layer sized to the text box that does word-wrap,
+ * auto-fit (shrink font until it fits), optional ellipsis, and stroke/shadow.
+ */
+function buildTextSvg(o: TextOpts): string {
+  const W = o.box.width;
+  const H = o.box.height;
+
+  let fontSize = o.fontSize;
+  let lines = wrapText(o.text, W, fontSize, o.letterSpacing, o.bold);
+  if (o.autoFit) {
+    while (
+      (lines.length > o.maxLines || linesTooTall(lines.length, fontSize, o.lineHeight, H)) &&
+      fontSize > 8
+    ) {
+      fontSize -= 2;
+      lines = wrapText(o.text, W, fontSize, o.letterSpacing, o.bold);
+    }
+  }
+  if (lines.length > o.maxLines) {
+    lines = lines.slice(0, o.maxLines);
+    if (o.ellipsis && lines.length > 0) {
+      lines[lines.length - 1] = truncateWithEllipsis(
+        lines[lines.length - 1],
+        W,
+        fontSize,
+        o.letterSpacing,
+        o.bold,
+      );
+    }
+  }
+
+  const lineH = fontSize * o.lineHeight;
+  const totalH = lines.length * lineH;
+  const startY = (H - totalH) / 2 + fontSize * 0.85; // baseline of first line
+
+  const anchor = o.align === 'left' ? 'start' : o.align === 'right' ? 'end' : 'middle';
+  const xPos = o.align === 'left' ? 0 : o.align === 'right' ? W : W / 2;
+
+  const fontFaces = o.embeddedFonts
+    .map((f) => {
+      try {
+        const data = fs.readFileSync(f.file).toString('base64');
+        const ext = path.extname(f.file).slice(1).toLowerCase();
+        const mime =
+          ext === 'ttf'
+            ? 'font/ttf'
+            : ext === 'otf'
+              ? 'font/otf'
+              : ext === 'woff'
+                ? 'font/woff'
+                : 'font/woff2';
+        return `@font-face { font-family: '${escapeXml(f.family)}'; src: url(data:${mime};base64,${data}); }`;
+      } catch {
+        return '';
+      }
+    })
+    .join('\n');
+
+  const shadow = o.shadow
+    ? `<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+         <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
+         <feOffset dx="2" dy="2" result="offsetblur"/>
+         <feComponentTransfer><feFuncA type="linear" slope="0.6"/></feComponentTransfer>
+         <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+       </filter>`
+    : '';
+
+  const filterAttr = o.shadow ? ` filter="url(#shadow)"` : '';
+  const weight = o.bold ? 'bold' : 'normal';
+  const letter = o.letterSpacing ? ` letter-spacing="${o.letterSpacing}"` : '';
+
+  const tspans = lines
+    .map((line, i) => {
+      const y = startY + i * lineH;
+      return `<text x="${xPos}" y="${y}" text-anchor="${anchor}" font-family="${escapeXml(o.font)}" font-size="${fontSize}" font-weight="${weight}" fill="${o.color}" stroke="${o.stroke}" stroke-width="${o.strokeWidth}" paint-order="stroke"${letter}${filterAttr}>${escapeXml(line)}</text>`;
+    })
+    .join('\n');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+<defs>
+<style>${fontFaces}</style>
+${shadow}
+</defs>
+${tspans}
+</svg>`;
+}
+
+function approxCharWidth(fontSize: number, bold: boolean): number {
+  return fontSize * (bold ? 0.58 : 0.52);
+}
+
+function measure(text: string, fontSize: number, letterSpacing: number, bold: boolean): number {
+  return text.length * (approxCharWidth(fontSize, bold) + letterSpacing);
+}
+
+function wrapText(
+  text: string,
+  width: number,
+  fontSize: number,
+  letterSpacing: number,
+  bold: boolean,
+): string[] {
+  const paragraphs = text.split(/\n/);
+  const out: string[] = [];
+  for (const para of paragraphs) {
+    const words = para.split(/\s+/).filter(Boolean);
+    let current = '';
+    for (const w of words) {
+      const candidate = current ? current + ' ' + w : w;
+      if (measure(candidate, fontSize, letterSpacing, bold) <= width) {
+        current = candidate;
+      } else {
+        if (current) out.push(current);
+        current = w;
+      }
+    }
+    if (current) out.push(current);
+    if (words.length === 0) out.push('');
+  }
+  return out;
+}
+
+function linesTooTall(count: number, fontSize: number, lineHeight: number, boxH: number): boolean {
+  return count * fontSize * lineHeight > boxH;
+}
+
+function truncateWithEllipsis(
+  line: string,
+  width: number,
+  fontSize: number,
+  letterSpacing: number,
+  bold: boolean,
+): string {
+  let s = line;
+  while (s.length > 1 && measure(s + '…', fontSize, letterSpacing, bold) > width) {
+    s = s.slice(0, -1);
+  }
+  return s + '…';
+}
+
+/** Given a buffer already sized to box.width x box.height, return it clipped
+ * to the canvas (W x H). Returns null if the box is entirely outside. */
+async function clipToCanvas(
+  buffer: Buffer,
+  box: Box,
+  W: number,
+  H: number,
+): Promise<{ buffer: Buffer; left: number; top: number } | null> {
+  let left = box.x;
+  let top = box.y;
+  let extractLeft = 0;
+  let extractTop = 0;
+  let extractW = box.width;
+  let extractH = box.height;
+
+  if (left < 0) {
+    extractLeft = -left;
+    extractW += left;
+    left = 0;
+  }
+  if (top < 0) {
+    extractTop = -top;
+    extractH += top;
+    top = 0;
+  }
+  if (left + extractW > W) extractW = W - left;
+  if (top + extractH > H) extractH = H - top;
+
+  if (extractW <= 0 || extractH <= 0) return null;
+
+  if (
+    extractLeft === 0 &&
+    extractTop === 0 &&
+    extractW === box.width &&
+    extractH === box.height
+  ) {
+    return { buffer, left, top };
+  }
+  const clipped = await sharp(buffer)
+    .extract({ left: extractLeft, top: extractTop, width: extractW, height: extractH })
+    .toBuffer();
+  return { buffer: clipped, left, top };
+}
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
