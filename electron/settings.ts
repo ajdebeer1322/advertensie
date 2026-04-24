@@ -71,6 +71,37 @@ export interface AppSettings {
   exportFormat: 'png' | 'jpg';
   exportQuality: number;
   filenamePattern: string; // e.g. "{image_name}-promo.{ext}"
+
+  // Extra dynamic elements (text or image) added by the user
+  customElements: CustomElement[];
+
+  /** Per-image overrides keyed by image filename (without extension).
+   * Each entry is a partial settings object that overrides global settings
+   * for just that one product image. */
+  overrides: Record<string, Partial<AppSettings>>;
+}
+
+export interface CustomElement {
+  id: string;
+  type: 'text' | 'image';
+  label: string;
+  enabled: boolean;
+  box: Box;
+
+  // Text fields
+  sheetColumn?: string;      // bind text to a sheet column (overrides staticText)
+  staticText?: string;       // fixed text or a template like "From R{price}"
+  font?: string;
+  fontSize?: number;
+  color?: string;
+  stroke?: string;
+  strokeWidth?: number;
+  align?: 'left' | 'center' | 'right';
+  bold?: boolean;
+  uppercase?: boolean;
+
+  // Image fields
+  imagePath?: string;        // static overlay PNG
 }
 
 export interface Box {
@@ -140,6 +171,9 @@ const DEFAULTS: AppSettings = {
   exportFormat: 'png',
   exportQuality: 92,
   filenamePattern: '{image_name}-promo.{ext}',
+
+  customElements: [],
+  overrides: {},
 };
 
 let cached: AppSettings | null = null;

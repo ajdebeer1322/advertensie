@@ -64,6 +64,30 @@ export interface AppSettings {
   exportFormat: 'png' | 'jpg';
   exportQuality: number;
   filenamePattern: string;
+
+  customElements: CustomElement[];
+  overrides: Record<string, Partial<AppSettings>>;
+}
+
+export interface CustomElement {
+  id: string;
+  type: 'text' | 'image';
+  label: string;
+  enabled: boolean;
+  box: Box;
+
+  sheetColumn?: string;
+  staticText?: string;
+  font?: string;
+  fontSize?: number;
+  color?: string;
+  stroke?: string;
+  strokeWidth?: number;
+  align?: 'left' | 'center' | 'right';
+  bold?: boolean;
+  uppercase?: boolean;
+
+  imagePath?: string;
 }
 
 export interface ImageItem {
@@ -113,11 +137,20 @@ declare global {
         description: string;
         price: string;
         embeddedFonts?: FolderFont[];
+        sheetRow?: Record<string, string>;
+        settingsOverride?: Partial<AppSettings>;
       }) => Promise<{ ok: true; dataUrl: string } | { ok: false; error: string }>;
 
       renderBatch: (payload: {
         settings: AppSettings;
-        items: { imagePath: string; description: string; price: string; keyName: string }[];
+        items: {
+          imagePath: string;
+          description: string;
+          price: string;
+          keyName: string;
+          sheetRow?: Record<string, string>;
+          settingsOverride?: Partial<AppSettings>;
+        }[];
         embeddedFonts?: FolderFont[];
       }) => Promise<
         | {

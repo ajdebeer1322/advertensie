@@ -10,6 +10,8 @@ export interface RenderInput {
   price: string;
   /** Optional font file paths loaded into @font-face inside the SVG. */
   embeddedFonts?: { family: string; file: string }[];
+  /** Optional matched sheet row, used to resolve custom element sheetColumn bindings. */
+  sheetRow?: Record<string, string>;
 }
 
 export interface RenderResult {
@@ -127,6 +129,55 @@ export async function renderAd(input: RenderInput): Promise<RenderResult> {
     });
     const rasterized = await sharp(Buffer.from(svg)).png().toBuffer();
     await addLayer(rasterized, settings.priceTextBox);
+  }
+
+  // Custom extras (text or image), in declared order
+  for (const el of settings.customElements || []) {
+    if (!el.enabled) continue;
+    if (el.type === 'image') {
+      if (!el.imagePath || !fs.existsSync(el.imagePath)) continue;
+      const buf = await sharp(el.imagePath)
+        .resize(Math.max(1, el.box.width), Math.max(1, el.box.height), {
+          fit: 'contain',
+          background: { r: 0, g: 0, b: 0, alpha: 0 },
+        })
+        .png()
+        .toBuffer();
+      await addLayer(buf, el.box);
+    } else {
+      // text
+      let text = el.staticText || '';
+      if (el.sheetColumn && input.sheetRow) {
+        const v = input.sheetRow[el.sheetColumn];
+        if (v) text = v;
+      }
+      // Allow templating: replace {column} placeholders from the sheet row
+      if (input.sheetRow) {
+        text = text.replace(/\{([^}]+)\}/g, (_, k) => input.sheetRow?.[k] ?? '');
+      }
+      if (!text) continue;
+      if (el.uppercase) text = text.toUpperCase();
+      const svg = buildTextSvg({
+        text: normalizeBreaks(text),
+        box: el.box,
+        font: el.font || 'Arial',
+        fontSize: el.fontSize ?? 32,
+        lineHeight: 1.1,
+        letterSpacing: 0,
+        color: el.color || '#ffffff',
+        stroke: el.stroke || '#000000',
+        strokeWidth: el.strokeWidth ?? 0,
+        shadow: false,
+        align: el.align || 'center',
+        bold: !!el.bold,
+        maxLines: 4,
+        autoFit: true,
+        ellipsis: true,
+        embeddedFonts: input.embeddedFonts || [],
+      });
+      const rasterized = await sharp(Buffer.from(svg)).png().toBuffer();
+      await addLayer(rasterized, el.box);
+    }
   }
 
   const pipeline = base.composite(composites);

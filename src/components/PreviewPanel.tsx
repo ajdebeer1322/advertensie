@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppSettings, Box, FolderFont, ImageItem, ReportEntry, SheetRow } from '../types';
 import { findRow } from '../utils/matching';
-import { InteractiveCanvas, BOXES, BoxKey } from './InteractiveCanvas';
+import { InteractiveCanvas, BOXES, BoxKey, getAllBoxes } from './InteractiveCanvas';
 import { ThumbStrip } from './ThumbStrip';
+import { imageKey, mergeOverride } from '../utils/overrides';
 
 interface Props {
   settings: AppSettings;
@@ -32,6 +33,41 @@ export function PreviewPanel(p: Props) {
   const list = selectedList.length ? selectedList : p.images;
   const current = p.activePath || list[0]?.path || null;
   const idx = current ? list.findIndex((i) => i.path === current) : -1;
+  const currentImg = idx >= 0 ? list[idx] : null;
+  const currentKey = currentImg ? imageKey(currentImg.name) : '';
+  const currentOverride = currentKey ? p.settings.overrides?.[currentKey] : undefined;
+  const hasOverride = !!currentOverride && Object.keys(currentOverride).length > 0;
+
+  // Effective settings = global merged with per-image override (when an image is active).
+  const effective: AppSettings = useMemo(
+    () => (currentKey ? mergeOverride(p.settings, currentOverride) : p.settings),
+    [p.settings, currentKey, currentOverride],
+  );
+
+  const [overrideMode, setOverrideMode] = useState(false);
+
+  // Route a settings patch — either to global settings or into the per-image override.
+  const writePatch = useCallback(
+    (patch: Partial<AppSettings>) => {
+      if (overrideMode && currentKey) {
+        const prev = p.settings.overrides?.[currentKey] || {};
+        const nextOv: Partial<AppSettings> = { ...prev, ...patch };
+        p.updateSettings({
+          overrides: { ...(p.settings.overrides || {}), [currentKey]: nextOv },
+        });
+      } else {
+        p.updateSettings(patch);
+      }
+    },
+    [overrideMode, currentKey, p.settings, p.updateSettings],
+  );
+
+  const resetOverride = useCallback(() => {
+    if (!currentKey) return;
+    const next = { ...(p.settings.overrides || {}) };
+    delete next[currentKey];
+    p.updateSettings({ overrides: next });
+  }, [currentKey, p.settings.overrides, p.updateSettings]);
 
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -80,6 +116,7 @@ export function PreviewPanel(p: Props) {
     setErr(null);
     let desc = '';
     let price = '';
+    let sheetRow: Record<string, string> | undefined;
     if (p.settings.dataSource === 'demo') {
       desc = p.settings.demoDescription;
       price = p.settings.demoPrice;
@@ -89,6 +126,7 @@ export function PreviewPanel(p: Props) {
         : undefined;
       desc = row ? row[p.settings.descriptionColumn] || '' : '';
       price = row ? row[p.settings.priceColumn] || '' : '';
+      sheetRow = row;
     }
     if (!desc) desc = p.settings.demoDescription || 'DEMO PRODUCT';
     if (!price) price = p.settings.demoPrice || '99';
@@ -98,6 +136,8 @@ export function PreviewPanel(p: Props) {
       description: desc,
       price,
       embeddedFonts: p.folderFonts,
+      sheetRow,
+      settingsOverride: currentOverride,
     });
     if (res.ok) setDataUrl(res.dataUrl);
     else {
@@ -105,7 +145,7 @@ export function PreviewPanel(p: Props) {
       p.log('fail', `Preview render failed: ${res.error}`);
     }
     setBusy(false);
-  }, [current, list, p.settings, p.rows, p.folderFonts, p.log]);
+  }, [current, list, p.settings, p.rows, p.folderFonts, p.log, currentOverride]);
 
   useEffect(() => {
     if (renderTimer.current) window.clearTimeout(renderTimer.current);
@@ -168,7 +208,45 @@ export function PreviewPanel(p: Props) {
           <span className="muted" style={{ flex: 1 }}>
             {current ? `${idx + 1}/${list.length} — ${list[idx]?.name}` : 'Nothing to preview'}
             {busy && ' · rendering…'}
+            {hasOverride && (
+              <span
+                style={{
+                  marginLeft: 8,
+                  padding: '2px 8px',
+                  background: '#fbbf24',
+                  color: '#111827',
+                  borderRadius: 4,
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}
+                title="This image has its own override settings"
+              >
+                OVERRIDE
+              </span>
+            )}
           </span>
+          <button
+            className={overrideMode ? '' : 'secondary'}
+            onClick={() => setOverrideMode((v) => !v)}
+            disabled={!currentKey}
+            title={
+              overrideMode
+                ? 'Edits go to this image only — click to return to global edits'
+                : 'Make edits affect only this image'
+            }
+            style={overrideMode ? { background: '#fbbf24', color: '#111827' } : undefined}
+          >
+            {overrideMode ? '✓ Editing override' : '✏️ Override this image'}
+          </button>
+          {hasOverride && (
+            <button
+              className="secondary"
+              onClick={resetOverride}
+              title="Remove this image's override and use global settings"
+            >
+              🗑 Reset
+            </button>
+          )}
           <button className="secondary" onClick={() => setPanelOpen(!panelOpen)}>
             {panelOpen ? '▶ Hide panel' : '◀ Show panel'}
           </button>
@@ -198,9 +276,9 @@ export function PreviewPanel(p: Props) {
           }}
         >
           <InteractiveCanvas
-            settings={p.settings}
+            settings={effective}
             previewDataUrl={dataUrl}
-            onChange={(patch) => p.updateSettings(patch)}
+            onChange={writePatch}
             onCommitHistory={p.onCommitHistory}
             active={active}
             onActiveChange={setActive}
@@ -233,6 +311,7 @@ export function PreviewPanel(p: Props) {
             onToggle={() => setOpenSection(openSection === 'layers' ? 'canvas' : 'layers')}
           >
             <LayersList
+              boxes={getAllBoxes(effective)}
               active={active}
               onActive={setActive}
               visible={visible}
@@ -240,20 +319,53 @@ export function PreviewPanel(p: Props) {
             />
           </Section>
 
-          {active && (
-            <Section
-              title={`Position — ${BOXES.find((b) => b.key === active)?.label}`}
-              open={openSection === 'box'}
-              onToggle={() => setOpenSection(openSection === 'box' ? 'canvas' : 'box')}
+          {overrideMode && (
+            <div
+              style={{
+                padding: '8px 12px',
+                background: '#78350f',
+                color: '#fef3c7',
+                fontSize: 12,
+                borderBottom: '1px solid #374151',
+              }}
             >
-              <BoxEditor
-                box={p.settings[active]}
-                canvasW={p.settings.canvasWidth}
-                canvasH={p.settings.canvasHeight}
-                onChange={(b) => p.updateSettings({ [active]: b } as Partial<AppSettings>)}
-              />
-            </Section>
+              Override mode: edits below apply to <b>{currentImg?.name}</b> only.
+            </div>
           )}
+
+          {active && (() => {
+            const allBoxes = getAllBoxes(effective);
+            const def = allBoxes.find((b) => b.key === active);
+            const isCustom = !!def?.custom;
+            const currentBox = isCustom
+              ? effective.customElements.find((c) => c.id === active)?.box
+              : (effective as any)[active];
+            if (!currentBox) return null;
+            return (
+              <Section
+                title={`Position — ${def?.label || active}`}
+                open={openSection === 'box'}
+                onToggle={() => setOpenSection(openSection === 'box' ? 'canvas' : 'box')}
+              >
+                <BoxEditor
+                  box={currentBox}
+                  canvasW={effective.canvasWidth}
+                  canvasH={effective.canvasHeight}
+                  onChange={(b) => {
+                    if (isCustom) {
+                      writePatch({
+                        customElements: effective.customElements.map((c) =>
+                          c.id === active ? { ...c, box: b } : c,
+                        ),
+                      });
+                    } else {
+                      writePatch({ [active]: b } as Partial<AppSettings>);
+                    }
+                  }}
+                />
+              </Section>
+            );
+          })()}
 
           <Section
             title="Description text"
@@ -263,9 +375,9 @@ export function PreviewPanel(p: Props) {
             }
           >
             <DescriptionEditor
-              settings={p.settings}
+              settings={effective}
               allFonts={p.allFonts}
-              onChange={(patch) => p.updateSettings(patch)}
+              onChange={writePatch}
             />
           </Section>
 
@@ -275,9 +387,9 @@ export function PreviewPanel(p: Props) {
             onToggle={() => setOpenSection(openSection === 'price' ? 'canvas' : 'price')}
           >
             <PriceEditor
-              settings={p.settings}
+              settings={effective}
               allFonts={p.allFonts}
-              onChange={(patch) => p.updateSettings(patch)}
+              onChange={writePatch}
             />
           </Section>
 
@@ -291,16 +403,16 @@ export function PreviewPanel(p: Props) {
                 <label>Width</label>
                 <input
                   type="number"
-                  value={p.settings.canvasWidth}
-                  onChange={(e) => p.updateSettings({ canvasWidth: Number(e.target.value) })}
+                  value={effective.canvasWidth}
+                  onChange={(e) => writePatch({ canvasWidth: Number(e.target.value) })}
                 />
               </div>
               <div>
                 <label>Height</label>
                 <input
                   type="number"
-                  value={p.settings.canvasHeight}
-                  onChange={(e) => p.updateSettings({ canvasHeight: Number(e.target.value) })}
+                  value={effective.canvasHeight}
+                  onChange={(e) => writePatch({ canvasHeight: Number(e.target.value) })}
                 />
               </div>
             </div>
@@ -349,11 +461,13 @@ function Section({
 }
 
 function LayersList({
+  boxes,
   active,
   onActive,
   visible,
   onVisible,
 }: {
+  boxes: { key: BoxKey; label: string; color: string; custom?: boolean }[];
   active: BoxKey | null;
   onActive: (k: BoxKey | null) => void;
   visible: Record<BoxKey, boolean>;
@@ -361,7 +475,7 @@ function LayersList({
 }) {
   return (
     <div>
-      {BOXES.map((b) => (
+      {boxes.map((b) => (
         <div
           key={b.key}
           onClick={() => onActive(b.key)}
@@ -379,14 +493,19 @@ function LayersList({
         >
           <input
             type="checkbox"
-            checked={visible[b.key]}
+            checked={visible[b.key] !== false}
             onChange={(e) => {
               e.stopPropagation();
               onVisible({ ...visible, [b.key]: e.target.checked });
             }}
             onClick={(e) => e.stopPropagation()}
           />
-          <span style={{ fontSize: 13 }}>{b.label}</span>
+          <span style={{ fontSize: 13 }}>
+            {b.label}
+            {b.custom && (
+              <span style={{ color: '#9ca3af', fontSize: 10, marginLeft: 6 }}>· custom</span>
+            )}
+          </span>
         </div>
       ))}
     </div>

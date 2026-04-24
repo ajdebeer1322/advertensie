@@ -5,6 +5,7 @@ import { PreviewPanel } from './components/PreviewPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ReportPanel } from './components/ReportPanel';
 import { findRow } from './utils/matching';
+import { imageKey } from './utils/overrides';
 
 type View = 'browser' | 'preview' | 'settings' | 'report';
 
@@ -174,13 +175,22 @@ export default function App() {
       await refreshSheet();
     }
 
-    const items: { imagePath: string; description: string; price: string; keyName: string }[] = [];
+    const items: {
+      imagePath: string;
+      description: string;
+      price: string;
+      keyName: string;
+      sheetRow?: Record<string, string>;
+      settingsOverride?: Partial<AppSettings>;
+    }[] = [];
     for (const p of selected) {
       const item = images.find((i) => i.path === p);
       if (!item) continue;
-      const keyName = item.name.replace(/\.[^.]+$/, '');
+      const keyName = imageKey(item.name);
+      const settingsOverride = settings.overrides?.[keyName];
       let desc = '';
       let price = '';
+      let sheetRow: Record<string, string> | undefined;
       if (settings.dataSource === 'demo') {
         desc = settings.demoDescription;
         price = settings.demoPrice;
@@ -192,10 +202,18 @@ export default function App() {
         }
         desc = row[settings.descriptionColumn] || '';
         price = row[settings.priceColumn] || '';
+        sheetRow = row;
         if (!desc) log('fail', `Missing description for ${item.name}`);
         if (!price) log('fail', `Missing price for ${item.name}`);
       }
-      items.push({ imagePath: item.path, description: desc, price, keyName });
+      items.push({
+        imagePath: item.path,
+        description: desc,
+        price,
+        keyName,
+        sheetRow,
+        settingsOverride,
+      });
     }
 
     if (items.length === 0) {

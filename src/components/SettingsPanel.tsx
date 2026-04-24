@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { AppSettings, Box, FolderFont, ReportEntry, SheetRow } from '../types';
+import type { AppSettings, Box, CustomElement, FolderFont, ReportEntry, SheetRow } from '../types';
 
 interface Props {
   settings: AppSettings;
@@ -10,7 +10,7 @@ interface Props {
   log: (level: ReportEntry['level'], text: string) => void;
 }
 
-type Tab = 'sheet' | 'folders' | 'overlays' | 'layout' | 'fonts' | 'export';
+type Tab = 'sheet' | 'folders' | 'overlays' | 'layout' | 'fonts' | 'export' | 'extras';
 
 export function SettingsPanel({
   settings,
@@ -37,7 +37,7 @@ export function SettingsPanel({
   return (
     <div>
       <div className="tabs">
-        {(['sheet', 'folders', 'overlays', 'layout', 'fonts', 'export'] as Tab[]).map((t) => (
+        {(['sheet', 'folders', 'overlays', 'layout', 'fonts', 'export', 'extras'] as Tab[]).map((t) => (
           <div key={t} className={'tab ' + (tab === t ? 'active' : '')} onClick={() => setTab(t)}>
             {t}
           </div>
@@ -382,6 +382,326 @@ export function SettingsPanel({
           </div>
         </div>
       )}
+
+      {tab === 'extras' && (
+        <ExtrasEditor
+          settings={s}
+          updateSettings={updateSettings}
+          allFonts={allFonts}
+        />
+      )}
+    </div>
+  );
+}
+
+function ExtrasEditor({
+  settings,
+  updateSettings,
+  allFonts,
+}: {
+  settings: AppSettings;
+  updateSettings: (s: Partial<AppSettings>) => Promise<void>;
+  allFonts: string[];
+}) {
+  const list = settings.customElements || [];
+
+  const update = (id: string, patch: Partial<CustomElement>) =>
+    updateSettings({
+      customElements: list.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+    });
+  const remove = (id: string) =>
+    updateSettings({ customElements: list.filter((e) => e.id !== id) });
+  const move = (id: string, dir: -1 | 1) => {
+    const i = list.findIndex((e) => e.id === id);
+    if (i < 0) return;
+    const j = i + dir;
+    if (j < 0 || j >= list.length) return;
+    const next = list.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    updateSettings({ customElements: next });
+  };
+  const add = (type: 'text' | 'image') => {
+    const el: CustomElement = {
+      id: `el-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      type,
+      label: type === 'text' ? 'New text' : 'New image',
+      enabled: true,
+      box: { x: 100, y: 100, width: 300, height: 100 },
+      ...(type === 'text'
+        ? {
+            staticText: 'Sample text',
+            font: 'Arial',
+            fontSize: 32,
+            color: '#ffffff',
+            stroke: '#000000',
+            strokeWidth: 0,
+            align: 'center' as const,
+            bold: false,
+            uppercase: false,
+          }
+        : { imagePath: '' }),
+    };
+    updateSettings({ customElements: [...list, el] });
+  };
+
+  return (
+    <div className="card">
+      <h3>Extras</h3>
+      <p className="muted">
+        Add extra text or images on top of your ad. Text can pull from any sheet column, or use a
+        template like <code>{'{name}'} – R{'{price}'}</code>.
+      </p>
+      <div className="toolbar">
+        <button onClick={() => add('text')}>➕ Add text</button>
+        <button onClick={() => add('image')}>➕ Add image</button>
+      </div>
+
+      {list.length === 0 && (
+        <div className="muted" style={{ marginTop: 12 }}>
+          No extra elements yet.
+        </div>
+      )}
+
+      {list.map((el, i) => (
+        <ExtraCard
+          key={el.id}
+          el={el}
+          allFonts={allFonts}
+          onChange={(patch) => update(el.id, patch)}
+          onRemove={() => remove(el.id)}
+          onUp={i > 0 ? () => move(el.id, -1) : undefined}
+          onDown={i < list.length - 1 ? () => move(el.id, 1) : undefined}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ExtraCard({
+  el,
+  allFonts,
+  onChange,
+  onRemove,
+  onUp,
+  onDown,
+}: {
+  el: CustomElement;
+  allFonts: string[];
+  onChange: (p: Partial<CustomElement>) => void;
+  onRemove: () => void;
+  onUp?: () => void;
+  onDown?: () => void;
+}) {
+  const isText = el.type === 'text';
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        padding: 12,
+        background: '#111827',
+        border: '1px solid #374151',
+        borderRadius: 6,
+      }}
+    >
+      <div className="toolbar">
+        <span style={{ fontWeight: 600 }}>
+          {isText ? '📝' : '🖼'} {el.label || (isText ? 'Text' : 'Image')}
+        </span>
+        <span style={{ flex: 1 }} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
+          <input
+            type="checkbox"
+            checked={el.enabled}
+            onChange={(e) => onChange({ enabled: e.target.checked })}
+          />
+          <span style={{ fontSize: 12 }}>Enabled</span>
+        </label>
+        <button className="secondary" disabled={!onUp} onClick={onUp}>
+          ↑
+        </button>
+        <button className="secondary" disabled={!onDown} onClick={onDown}>
+          ↓
+        </button>
+        <button className="danger" onClick={onRemove}>
+          Delete
+        </button>
+      </div>
+
+      <div className="field-grid" style={{ marginTop: 8 }}>
+        <div>
+          <label>Label</label>
+          <input
+            type="text"
+            value={el.label}
+            onChange={(e) => onChange({ label: e.target.value })}
+          />
+        </div>
+        <div className="field-grid" style={{ gap: 6 }}>
+          <div>
+            <label>X</label>
+            <input
+              type="number"
+              value={el.box.x}
+              onChange={(e) =>
+                onChange({ box: { ...el.box, x: Number(e.target.value) } })
+              }
+            />
+          </div>
+          <div>
+            <label>Y</label>
+            <input
+              type="number"
+              value={el.box.y}
+              onChange={(e) =>
+                onChange({ box: { ...el.box, y: Number(e.target.value) } })
+              }
+            />
+          </div>
+          <div>
+            <label>W</label>
+            <input
+              type="number"
+              value={el.box.width}
+              onChange={(e) =>
+                onChange({ box: { ...el.box, width: Number(e.target.value) } })
+              }
+            />
+          </div>
+          <div>
+            <label>H</label>
+            <input
+              type="number"
+              value={el.box.height}
+              onChange={(e) =>
+                onChange({ box: { ...el.box, height: Number(e.target.value) } })
+              }
+            />
+          </div>
+        </div>
+      </div>
+
+      {isText ? (
+        <div style={{ marginTop: 8 }}>
+          <div className="field-grid">
+            <div>
+              <label>Sheet column (optional — overrides text below)</label>
+              <input
+                type="text"
+                placeholder="e.g. brand"
+                value={el.sheetColumn || ''}
+                onChange={(e) => onChange({ sheetColumn: e.target.value })}
+              />
+            </div>
+            <div>
+              <label>Static text / template (use {'{column}'})</label>
+              <textarea
+                rows={2}
+                value={el.staticText || ''}
+                onChange={(e) => onChange({ staticText: e.target.value })}
+                style={{ resize: 'vertical' }}
+              />
+            </div>
+          </div>
+          <div className="field-grid" style={{ marginTop: 8 }}>
+            <div>
+              <label>Font</label>
+              <select
+                value={el.font || 'Arial'}
+                onChange={(e) => onChange({ font: e.target.value })}
+                style={{ fontFamily: `'${el.font || 'Arial'}', sans-serif` }}
+              >
+                {allFonts.map((f) => (
+                  <option key={f} value={f} style={{ fontFamily: `'${f}', sans-serif` }}>
+                    {f}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Size</label>
+              <input
+                type="number"
+                value={el.fontSize ?? 32}
+                onChange={(e) => onChange({ fontSize: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <label>Color</label>
+              <input
+                type="color"
+                value={el.color || '#ffffff'}
+                onChange={(e) => onChange({ color: e.target.value })}
+              />
+            </div>
+            <div>
+              <label>Stroke</label>
+              <input
+                type="color"
+                value={el.stroke || '#000000'}
+                onChange={(e) => onChange({ stroke: e.target.value })}
+              />
+            </div>
+            <div>
+              <label>Stroke width</label>
+              <input
+                type="number"
+                value={el.strokeWidth ?? 0}
+                onChange={(e) => onChange({ strokeWidth: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <label>Align</label>
+              <select
+                value={el.align || 'center'}
+                onChange={(e) => onChange({ align: e.target.value as any })}
+              >
+                <option value="left">left</option>
+                <option value="center">center</option>
+                <option value="right">right</option>
+              </select>
+            </div>
+          </div>
+          <div className="toolbar" style={{ marginTop: 8 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
+              <input
+                type="checkbox"
+                checked={!!el.bold}
+                onChange={(e) => onChange({ bold: e.target.checked })}
+              />
+              <span style={{ fontSize: 12 }}>Bold</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
+              <input
+                type="checkbox"
+                checked={!!el.uppercase}
+                onChange={(e) => onChange({ uppercase: e.target.checked })}
+              />
+              <span style={{ fontSize: 12 }}>Uppercase</span>
+            </label>
+          </div>
+        </div>
+      ) : (
+        <div style={{ marginTop: 8 }}>
+          <label>Image file (PNG)</label>
+          <div className="toolbar">
+            <button
+              className="secondary"
+              onClick={async () => {
+                const f = await window.api.pickFile(
+                  [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+                  'Choose image',
+                );
+                if (f) onChange({ imagePath: f });
+              }}
+            >
+              📎 Choose
+            </button>
+            <span className="muted" style={{ wordBreak: 'break-all' }}>
+              {el.imagePath || '(not set)'}
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -537,11 +857,141 @@ function FolderRow({ label, value, onPick }: { label: string; value: string; onP
   );
 }
 
+function OverlayRow({
+  label,
+  value,
+  onPick,
+  onClear,
+}: {
+  label: string;
+  value: string;
+  onPick: () => void;
+  onClear: () => void;
+}) {
+  const [dataUrl, setDataUrl] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!value) {
+      setDataUrl(null);
+      return;
+    }
+    window.api.readFileAsDataUrl(value).then((u) => {
+      if (!cancelled) setDataUrl(u);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [value]);
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: 12,
+        alignItems: 'center',
+        padding: 10,
+        marginBottom: 10,
+        background: '#111827',
+        border: '1px solid #374151',
+        borderRadius: 6,
+      }}
+    >
+      <div
+        style={{
+          width: 120,
+          height: 120,
+          flex: '0 0 120px',
+          borderRadius: 4,
+          background:
+            'repeating-conic-gradient(#1f2937 0% 25%, #111827 0% 50%) 50% / 16px 16px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+        }}
+      >
+        {dataUrl ? (
+          <img
+            src={dataUrl}
+            alt={label}
+            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+          />
+        ) : (
+          <span style={{ color: '#6b7280', fontSize: 11 }}>(no image)</span>
+        )}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>{label}</div>
+        <div
+          className="muted"
+          style={{ wordBreak: 'break-all', marginBottom: 8, fontSize: 11 }}
+        >
+          {value || '(not set)'}
+        </div>
+        <div className="toolbar">
+          <button className="secondary" onClick={onPick}>
+            📎 {value ? 'Replace' : 'Choose'}
+          </button>
+          {value && (
+            <button className="secondary" onClick={onClear}>
+              ✕ Clear
+            </button>
+          )}
+          {value && (
+            <button className="secondary" onClick={() => window.api.openPath(value)}>
+              📂 Open
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FileRow({ label, value, onPick }: { label: string; value: string; onPick: () => void }) {
+  const [dataUrl, setDataUrl] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!value) {
+      setDataUrl(null);
+      return;
+    }
+    window.api.readFileAsDataUrl(value).then((u) => {
+      if (!cancelled) setDataUrl(u);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [value]);
+
   return (
     <div style={{ marginBottom: 12 }}>
       <label>{label}</label>
       <div className="toolbar">
+        <div
+          style={{
+            width: 48,
+            height: 48,
+            flex: '0 0 48px',
+            borderRadius: 4,
+            border: '1px solid #374151',
+            background:
+              'repeating-conic-gradient(#1f2937 0% 25%, #111827 0% 50%) 50% / 10px 10px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
+          }}
+        >
+          {dataUrl && (
+            <img
+              src={dataUrl}
+              alt=""
+              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+            />
+          )}
+        </div>
         <button className="secondary" onClick={onPick}>
           📎 Choose
         </button>

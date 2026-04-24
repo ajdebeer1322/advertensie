@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { AppSettings, Box } from '../types';
 
-type BoxKey =
+type BuiltinBoxKey =
   | 'productBox'
   | 'headerBox'
   | 'descriptionBox'
@@ -9,13 +9,16 @@ type BoxKey =
   | 'descriptionTextBox'
   | 'priceTextBox';
 
+type BoxKey = BuiltinBoxKey | string; // custom IDs use the element id
+
 interface BoxDef {
   key: BoxKey;
   label: string;
   color: string;
+  custom?: boolean;
 }
 
-const BOXES: BoxDef[] = [
+const BUILTIN_BOXES: BoxDef[] = [
   { key: 'productBox', label: 'Product', color: '#60a5fa' },
   { key: 'headerBox', label: 'Header / Logo', color: '#fbbf24' },
   { key: 'descriptionBox', label: 'Description sign', color: '#34d399' },
@@ -23,6 +26,37 @@ const BOXES: BoxDef[] = [
   { key: 'descriptionTextBox', label: 'Description text', color: '#a78bfa' },
   { key: 'priceTextBox', label: 'Price text', color: '#f472b6' },
 ];
+
+const CUSTOM_COLORS = ['#22d3ee', '#facc15', '#a3e635', '#fb7185', '#c084fc', '#f59e0b'];
+
+export function getAllBoxes(settings: AppSettings): BoxDef[] {
+  const customs = (settings.customElements || []).map((el, i) => ({
+    key: el.id,
+    label: el.label || (el.type === 'image' ? 'Custom image' : 'Custom text'),
+    color: CUSTOM_COLORS[i % CUSTOM_COLORS.length],
+    custom: true,
+  }));
+  return [...BUILTIN_BOXES, ...customs];
+}
+
+const BOXES = BUILTIN_BOXES; // kept for back-compat exports
+
+function getBoxValue(settings: AppSettings, key: BoxKey): Box {
+  if (BUILTIN_BOXES.some((b) => b.key === key)) return (settings as any)[key];
+  const el = settings.customElements?.find((e) => e.id === key);
+  return el?.box ?? { x: 0, y: 0, width: 100, height: 100 };
+}
+
+function makeBoxPatch(settings: AppSettings, key: BoxKey, box: Box): Partial<AppSettings> {
+  if (BUILTIN_BOXES.some((b) => b.key === key)) {
+    return { [key]: box } as Partial<AppSettings>;
+  }
+  return {
+    customElements: (settings.customElements || []).map((e) =>
+      e.id === key ? { ...e, box } : e,
+    ),
+  };
+}
 
 interface Props {
   settings: AppSettings;
@@ -105,9 +139,8 @@ export function InteractiveCanvas({
       const dx = (e.clientX - d.startX) / scale;
       const dy = (e.clientY - d.startY) / scale;
       const next = computeNextBox(d.startBox, d.mode, dx, dy);
-      const patch: Partial<AppSettings> = { [d.key]: next } as Partial<AppSettings>;
-      // When resizing a text box, scale the font size with the box height
-      // so the rendered text follows the box visually.
+      const patch: Partial<AppSettings> = makeBoxPatch(settings, d.key, next);
+      // Resizing a text box scales the font size with box height
       if (d.mode !== 'move' && d.startFontSize && d.startBox.height > 0) {
         const factor = next.height / d.startBox.height;
         const newSize = Math.max(6, Math.round(d.startFontSize * factor));
@@ -115,6 +148,15 @@ export function InteractiveCanvas({
           (patch as any).descriptionFontSize = newSize;
         } else if (d.key === 'priceTextBox') {
           (patch as any).priceFontSize = newSize;
+        } else {
+          // Custom text element — scale its fontSize too
+          const el = settings.customElements?.find((c) => c.id === d.key);
+          if (el && el.type === 'text') {
+            const elements = patch.customElements || settings.customElements || [];
+            patch.customElements = elements.map((c) =>
+              c.id === d.key ? { ...c, fontSize: newSize } : c,
+            );
+          }
         }
       }
       onChange(patch);
@@ -135,18 +177,19 @@ export function InteractiveCanvas({
     e.preventDefault();
     setActive(key);
     onCommitHistory?.();
-    const startFontSize =
-      key === 'descriptionTextBox'
-        ? settings.descriptionFontSize
-        : key === 'priceTextBox'
-          ? settings.priceFontSize
-          : undefined;
+    let startFontSize: number | undefined;
+    if (key === 'descriptionTextBox') startFontSize = settings.descriptionFontSize;
+    else if (key === 'priceTextBox') startFontSize = settings.priceFontSize;
+    else {
+      const el = settings.customElements?.find((c) => c.id === key);
+      if (el?.type === 'text') startFontSize = el.fontSize ?? 32;
+    }
     dragRef.current = {
       key,
       mode,
       startX: e.clientX,
       startY: e.clientY,
-      startBox: { ...settings[key] },
+      startBox: { ...getBoxValue(settings, key) },
       startFontSize,
     };
   };
@@ -161,7 +204,7 @@ export function InteractiveCanvas({
       )
         return;
       const step = e.shiftKey ? 10 : 1;
-      const b = settings[active];
+      const b = getBoxValue(settings, active);
       let nb = b;
       if (e.key === 'ArrowLeft') nb = { ...b, x: b.x - step };
       else if (e.key === 'ArrowRight') nb = { ...b, x: b.x + step };
@@ -170,7 +213,7 @@ export function InteractiveCanvas({
       else return;
       e.preventDefault();
       onCommitHistory?.();
-      onChange({ [active]: nb } as Partial<AppSettings>);
+      onChange(makeBoxPatch(settings, active, nb));
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -183,7 +226,7 @@ export function InteractiveCanvas({
       {!hideToolbar && (
       <div className="toolbar" style={{ flexWrap: 'wrap' }}>
         <span className="muted">Show / edit:</span>
-        {BOXES.map((b) => (
+        {getAllBoxes(settings).map((b) => (
           <label
             key={b.key}
             style={{
@@ -229,8 +272,10 @@ export function InteractiveCanvas({
             style={{ width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }}
           />
         )}
-        {BOXES.filter((b) => visible[b.key]).map((b) => {
-          const box = settings[b.key];
+        {getAllBoxes(settings)
+          .filter((b) => visible[b.key] !== false)
+          .map((b) => {
+          const box = getBoxValue(settings, b.key);
           const isActive = active === b.key;
           return (
             <div

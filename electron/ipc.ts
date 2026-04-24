@@ -6,6 +6,21 @@ import { fetchSheet } from './sheets';
 import { listSystemFonts, listFolderFonts } from './fonts';
 import { renderAd } from './renderer';
 import { findRow } from './matching';
+import type { CustomElement } from './settings';
+
+function mergeOverride(base: AppSettings, override: Partial<AppSettings> | undefined): AppSettings {
+  if (!override) return base;
+  const merged: AppSettings = { ...base, ...override };
+  if (override.customElements) {
+    const byId = new Map(base.customElements.map((e) => [e.id, e] as const));
+    for (const o of override.customElements) {
+      const existing = byId.get(o.id);
+      byId.set(o.id, existing ? { ...existing, ...o } as CustomElement : o);
+    }
+    merged.customElements = Array.from(byId.values());
+  }
+  return merged;
+}
 
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 
@@ -86,10 +101,13 @@ export function registerIpc(ipc: IpcMain, getWin: () => BrowserWindow | null) {
         description: string;
         price: string;
         embeddedFonts?: { family: string; file: string }[];
+        sheetRow?: Record<string, string>;
+        settingsOverride?: Partial<AppSettings>;
       },
     ) => {
       try {
-        const result = await renderAd(payload);
+        const merged = mergeOverride(payload.settings, payload.settingsOverride);
+        const result = await renderAd({ ...payload, settings: merged });
         const mime = result.format === 'png' ? 'image/png' : 'image/jpeg';
         return {
           ok: true as const,
@@ -107,7 +125,14 @@ export function registerIpc(ipc: IpcMain, getWin: () => BrowserWindow | null) {
       _e,
       payload: {
         settings: AppSettings;
-        items: { imagePath: string; description: string; price: string; keyName: string }[];
+        items: {
+          imagePath: string;
+          description: string;
+          price: string;
+          keyName: string;
+          sheetRow?: Record<string, string>;
+          settingsOverride?: Partial<AppSettings>;
+        }[];
         embeddedFonts?: { family: string; file: string }[];
       },
     ) => {
@@ -124,14 +149,16 @@ export function registerIpc(ipc: IpcMain, getWin: () => BrowserWindow | null) {
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         try {
+          const merged = mergeOverride(settings, item.settingsOverride);
           const { buffer, format } = await renderAd({
-            settings,
+            settings: merged,
             productImagePath: item.imagePath,
             description: item.description,
             price: item.price,
             embeddedFonts: payload.embeddedFonts,
+            sheetRow: item.sheetRow,
           });
-          const filename = (settings.filenamePattern || '{image_name}.{ext}')
+          const filename = (merged.filenamePattern || '{image_name}.{ext}')
             .replace('{image_name}', item.keyName)
             .replace('{ext}', format === 'jpg' ? 'jpg' : 'png');
           const outPath = path.join(outputDir, filename);
