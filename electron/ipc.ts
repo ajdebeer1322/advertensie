@@ -100,6 +100,7 @@ export function registerIpc(ipc: IpcMain, getWin: () => BrowserWindow | null) {
         productImagePath: string;
         description: string;
         price: string;
+        editorPreview?: boolean;
         embeddedFonts?: { family: string; file: string }[];
         sheetRow?: Record<string, string>;
         settingsOverride?: Partial<AppSettings>;

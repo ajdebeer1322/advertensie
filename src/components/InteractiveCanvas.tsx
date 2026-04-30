@@ -61,6 +61,9 @@ function makeBoxPatch(settings: AppSettings, key: BoxKey, box: Box): Partial<App
 interface Props {
   settings: AppSettings;
   previewDataUrl: string | null;
+  productImagePath?: string | null;
+  liveDescription?: string;
+  livePrice?: string;
   onChange: (patch: Partial<AppSettings>) => void;
   /** Called once at the start of a drag — parent should snapshot for undo. */
   onCommitHistory?: () => void;
@@ -73,6 +76,13 @@ interface Props {
   maxHeight?: number;
   /** Hide the built-in toolbar (parent renders its own). */
   hideToolbar?: boolean;
+  onTelemetry?: (t: {
+    source: 'editor-preview' | 'export-preview';
+    pending: number;
+    dropped: number;
+    cacheSize: number;
+    lastLoadMs: number;
+  }) => void;
 }
 
 export { BOXES };
@@ -92,6 +102,9 @@ interface DragState {
 export function InteractiveCanvas({
   settings,
   previewDataUrl,
+  productImagePath,
+  liveDescription,
+  livePrice,
   onChange,
   onCommitHistory,
   active,
@@ -101,12 +114,25 @@ export function InteractiveCanvas({
   maxWidth,
   maxHeight,
   hideToolbar,
+  onTelemetry,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [displaySize, setDisplaySize] = useState({ w: 800, h: 800 });
   const dragRef = useRef<DragState | null>(null);
   const setActive = onActiveChange;
   const setVisible = onVisibleChange;
+  const [baseImages, setBaseImages] = useState<Record<string, string | null>>({});
+  const baseImagesRef = useRef<Record<string, string | null>>({});
+  const [telemetry, setTelemetry] = useState({
+    source: 'editor-preview' as const,
+    pending: 0,
+    dropped: 0,
+    cacheSize: 0,
+    lastLoadMs: 0,
+  });
+  const jobRef = useRef(0);
+  const queuedPatchRef = useRef<Partial<AppSettings> | null>(null);
+  const rafRef = useRef<number | null>(null);
 
   // Fit canvas to available space (contain)
   useEffect(() => {
@@ -130,6 +156,95 @@ export function InteractiveCanvas({
   const displayWidth = displaySize.w;
   const displayHeight = displaySize.h;
   const scale = displayWidth / settings.canvasWidth;
+
+  useEffect(() => {
+    baseImagesRef.current = baseImages;
+  }, [baseImages]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const jobId = ++jobRef.current;
+    const mode: 'editor-preview' | 'export-preview' = productImagePath
+      ? 'editor-preview'
+      : 'export-preview';
+    const paths = [
+      productImagePath || '',
+      settings.headerOverlay,
+      settings.descriptionOverlay,
+      settings.priceOverlay,
+    ].filter(Boolean);
+
+    setBaseImages((prev) => {
+      const keep = new Set(paths);
+      const next = Object.fromEntries(
+        Object.entries(prev).filter(([path]) => keep.has(path)),
+      ) as Record<string, string | null>;
+      baseImagesRef.current = next;
+      setTelemetry((t) => ({ ...t, source: mode, cacheSize: Object.keys(next).length }));
+      return next;
+    });
+
+    const missing = paths.filter((p) => baseImagesRef.current[p] === undefined);
+    setTelemetry((t) => ({
+      ...t,
+      source: mode,
+      pending: missing.length,
+      cacheSize: Object.keys(baseImagesRef.current).length,
+    }));
+
+    for (const p of paths) {
+      if (baseImagesRef.current[p] !== undefined) continue;
+      const started = performance.now();
+      window.api.readFileAsDataUrl(p).then((url) => {
+        if (cancelled || jobId !== jobRef.current) {
+          setTelemetry((t) => ({ ...t, dropped: t.dropped + 1 }));
+          return;
+        }
+        setBaseImages((prev) => {
+          if (prev[p] !== undefined) return prev;
+          const next = { ...prev, [p]: url };
+          baseImagesRef.current = next;
+          setTelemetry((t) => ({
+            ...t,
+            pending: Math.max(0, t.pending - 1),
+            lastLoadMs: Math.round(performance.now() - started),
+            cacheSize: Object.keys(next).length,
+          }));
+          return next;
+        });
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    productImagePath,
+    settings.headerOverlay,
+    settings.descriptionOverlay,
+    settings.priceOverlay,
+  ]);
+
+  useEffect(() => {
+    onTelemetry?.(telemetry);
+  }, [telemetry, onTelemetry]);
+
+  const schedulePatch = (patch: Partial<AppSettings>) => {
+    queuedPatchRef.current = patch;
+    if (rafRef.current !== null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      const queued = queuedPatchRef.current;
+      queuedPatchRef.current = null;
+      if (queued) onChange(queued);
+    });
+  };
+
+  useEffect(
+    () => () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    },
+    [],
+  );
 
   // Mouse handlers
   useEffect(() => {
@@ -159,7 +274,7 @@ export function InteractiveCanvas({
           }
         }
       }
-      onChange(patch);
+      schedulePatch(patch);
     };
     const onUp = () => {
       dragRef.current = null;
@@ -170,7 +285,7 @@ export function InteractiveCanvas({
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [scale, onChange]);
+  }, [scale, settings]);
 
   const startDrag = (key: BoxKey, mode: DragMode, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -221,6 +336,8 @@ export function InteractiveCanvas({
 
   const activeBox = active ? settings[active] : null;
 
+  const isEditorPreview = !!productImagePath;
+
   return (
     <div ref={wrapRef}>
       {!hideToolbar && (
@@ -264,12 +381,55 @@ export function InteractiveCanvas({
           userSelect: 'none',
         }}
       >
-        {previewDataUrl && (
+        {isEditorPreview ? (
+          <EditorBase
+            settings={settings}
+            scale={scale}
+            productUrl={baseImages[productImagePath] || null}
+            headerUrl={baseImages[settings.headerOverlay] || null}
+            descriptionUrl={baseImages[settings.descriptionOverlay] || null}
+            priceUrl={baseImages[settings.priceOverlay] || null}
+          />
+        ) : previewDataUrl ? (
           <img
             src={previewDataUrl}
             alt="preview"
             draggable={false}
             style={{ width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }}
+          />
+        ) : null}
+        {isEditorPreview && visible.descriptionTextBox !== false && liveDescription && (
+          <LiveTextLayer
+            box={settings.descriptionTextBox}
+            scale={scale}
+            text={settings.descriptionUppercase ? liveDescription.toUpperCase() : liveDescription}
+            font={settings.descriptionFont}
+            fontSize={settings.descriptionFontSize}
+            lineHeight={settings.descriptionLineHeight}
+            letterSpacing={settings.descriptionLetterSpacing}
+            color={settings.descriptionColor}
+            stroke={settings.descriptionStroke}
+            strokeWidth={settings.descriptionStrokeWidth}
+            shadow={settings.descriptionShadow}
+            align={settings.descriptionAlign}
+            bold={settings.descriptionBold}
+          />
+        )}
+        {isEditorPreview && visible.priceTextBox !== false && livePrice && (
+          <LiveTextLayer
+            box={settings.priceTextBox}
+            scale={scale}
+            text={(settings.priceFormat || '{price}').replace('{price}', livePrice)}
+            font={settings.priceFont}
+            fontSize={settings.priceFontSize}
+            lineHeight={settings.priceLineHeight}
+            letterSpacing={settings.priceLetterSpacing}
+            color={settings.priceColor}
+            stroke={settings.priceStroke}
+            strokeWidth={settings.priceStrokeWidth}
+            shadow={settings.priceShadow}
+            align={settings.priceAlign}
+            bold={settings.priceBold}
           />
         )}
         {getAllBoxes(settings)
@@ -316,6 +476,172 @@ export function InteractiveCanvas({
         })}
       </div>
     </div>
+  );
+}
+
+function LiveTextLayer({
+  box,
+  scale,
+  text,
+  font,
+  fontSize,
+  lineHeight,
+  letterSpacing,
+  color,
+  stroke,
+  strokeWidth,
+  shadow,
+  align,
+  bold,
+}: {
+  box: Box;
+  scale: number;
+  text: string;
+  font: string;
+  fontSize: number;
+  lineHeight: number;
+  letterSpacing: number;
+  color: string;
+  stroke: string;
+  strokeWidth: number;
+  shadow: boolean;
+  align: 'left' | 'center' | 'right';
+  bold: boolean;
+}) {
+  const W = Math.max(1, box.width);
+  const H = Math.max(1, box.height);
+  const lines = text.split(/\n/);
+  const lineH = fontSize * lineHeight;
+  const totalH = lines.length * lineH;
+  const startY = (H - totalH) / 2 + fontSize * 0.85;
+  const anchor = align === 'left' ? 'start' : align === 'right' ? 'end' : 'middle';
+  const x = align === 'left' ? 0 : align === 'right' ? W : W / 2;
+
+  return (
+    <svg
+      width={W * scale}
+      height={H * scale}
+      viewBox={`0 0 ${W} ${H}`}
+      style={{
+        position: 'absolute',
+        left: box.x * scale,
+        top: box.y * scale,
+        overflow: 'hidden',
+        pointerEvents: 'none',
+        zIndex: 1,
+      }}
+    >
+      {shadow && (
+        <defs>
+          <filter id={`shadow-${box.x}-${box.y}`} x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="2" />
+            <feOffset dx="2" dy="2" result="offsetblur" />
+            <feComponentTransfer>
+              <feFuncA type="linear" slope="0.55" />
+            </feComponentTransfer>
+            <feMerge>
+              <feMergeNode />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+      )}
+      {lines.map((line, i) => (
+        <text
+          key={`${line}-${i}`}
+          x={x}
+          y={startY + i * lineH}
+          textAnchor={anchor}
+          fontFamily={`'${font}', sans-serif`}
+          fontSize={fontSize}
+          fontWeight={bold ? 800 : 400}
+          letterSpacing={letterSpacing}
+          fill={color}
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          paintOrder="stroke"
+          filter={shadow ? `url(#shadow-${box.x}-${box.y})` : undefined}
+        >
+          {line}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
+function EditorBase({
+  settings,
+  scale,
+  productUrl,
+  headerUrl,
+  descriptionUrl,
+  priceUrl,
+}: {
+  settings: AppSettings;
+  scale: number;
+  productUrl: string | null;
+  headerUrl: string | null;
+  descriptionUrl: string | null;
+  priceUrl: string | null;
+}) {
+  return (
+    <>
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: '#fff',
+          pointerEvents: 'none',
+        }}
+      />
+      {productUrl && (
+        <img
+          src={productUrl}
+          alt=""
+          draggable={false}
+          style={{
+            position: 'absolute',
+            left: settings.productBox.x * scale,
+            top: settings.productBox.y * scale,
+            width: settings.productBox.width * scale,
+            height: settings.productBox.height * scale,
+            objectFit: 'cover',
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+      <BaseOverlay url={headerUrl} box={settings.headerBox} scale={scale} />
+      <BaseOverlay url={descriptionUrl} box={settings.descriptionBox} scale={scale} />
+      <BaseOverlay url={priceUrl} box={settings.priceBox} scale={scale} />
+    </>
+  );
+}
+
+function BaseOverlay({
+  url,
+  box,
+  scale,
+}: {
+  url: string | null;
+  box: Box;
+  scale: number;
+}) {
+  if (!url) return null;
+  return (
+    <img
+      src={url}
+      alt=""
+      draggable={false}
+      style={{
+        position: 'absolute',
+        left: box.x * scale,
+        top: box.y * scale,
+        width: box.width * scale,
+        height: box.height * scale,
+        objectFit: 'contain',
+        pointerEvents: 'none',
+      }}
+    />
   );
 }
 

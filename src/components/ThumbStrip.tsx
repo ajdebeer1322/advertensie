@@ -43,7 +43,7 @@ export function ThumbStrip({ items, currentPath, onPick }: Props) {
         overflowX: 'auto',
         padding: '8px 2px',
         marginBottom: 12,
-        borderBottom: '1px solid #374151',
+        borderBottom: '1px solid rgba(148, 163, 184, 0.18)',
       }}
     >
       {items.map((it) => {
@@ -58,12 +58,13 @@ export function ThumbStrip({ items, currentPath, onPick }: Props) {
               flex: '0 0 auto',
               width: 72,
               height: 72,
-              border: `2px solid ${active ? '#fbbf24' : '#374151'}`,
-              borderRadius: 4,
+              border: `2px solid ${active ? '#f7b733' : 'rgba(148, 163, 184, 0.22)'}`,
+              borderRadius: 8,
               overflow: 'hidden',
               cursor: 'pointer',
-              background: '#111827',
+              background: '#101827',
               position: 'relative',
+              boxShadow: active ? '0 0 0 2px rgba(247, 183, 51, 0.16)' : 'none',
             }}
           >
             {thumbs[it.path] ? (

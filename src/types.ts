@@ -136,6 +136,7 @@ declare global {
         productImagePath: string;
         description: string;
         price: string;
+        editorPreview?: boolean;
         embeddedFonts?: FolderFont[];
         sheetRow?: Record<string, string>;
         settingsOverride?: Partial<AppSettings>;

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { AppSettings, ImageItem, SheetRow, FolderFont, ReportEntry } from './types';
 import { ProductBrowser } from './components/ProductBrowser';
 import { PreviewPanel } from './components/PreviewPanel';
@@ -22,6 +22,8 @@ export default function App() {
   const [folderFonts, setFolderFonts] = useState<FolderFont[]>([]);
   const [report, setReport] = useState<ReportEntry[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const saveTimer = useRef<number | null>(null);
+  const pendingSave = useRef<Partial<AppSettings>>({});
 
   const log = useCallback((level: ReportEntry['level'], text: string) => {
     setReport((r) => [{ level, text, ts: Date.now() }, ...r].slice(0, 500));
@@ -69,13 +71,21 @@ export default function App() {
 
   const updateSettings = useCallback(async (next: Partial<AppSettings>) => {
     // Optimistic: update React state synchronously so controlled inputs
-    // don't lag behind keystrokes. Persist to disk in the background.
+    // don't lag behind keystrokes. Persist to disk in a short debounce so
+    // sliders can drive live preview without doing file I/O on every tick.
     setSettings((prev) => (prev ? { ...prev, ...next } : prev));
-    try {
-      await window.api.saveSettings(next);
-    } catch (e: any) {
-      log('fail', `Settings save failed: ${e.message || e}`);
-    }
+    pendingSave.current = { ...pendingSave.current, ...next };
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(async () => {
+      const patch = pendingSave.current;
+      pendingSave.current = {};
+      saveTimer.current = null;
+      try {
+        await window.api.saveSettings(patch);
+      } catch (e: any) {
+        log('fail', `Settings save failed: ${e.message || e}`);
+      }
+    }, 220);
   }, [log]);
 
   /** Push current settings onto the undo stack. Call right before a change
@@ -254,31 +264,43 @@ export default function App() {
     return Array.from(new Set([...folder, ...sys]));
   }, [systemFonts, folderFonts]);
 
-  if (!settings) return <div style={{ padding: 24 }}>Loading…</div>;
+  if (!settings) return <div style={{ padding: 24 }}>Loading...</div>;
+
+  const navItems: { view: View; label: string; icon: string }[] = [
+    { view: 'browser', label: 'Products', icon: 'P' },
+    { view: 'preview', label: 'Preview', icon: 'V' },
+    { view: 'settings', label: 'Settings', icon: 'S' },
+    { view: 'report', label: 'Report', icon: 'R' },
+  ];
 
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="sidebar-title">☀ Sunshine Padstal</div>
-        {(['browser', 'preview', 'settings', 'report'] as View[]).map((v) => (
-          <div
-            key={v}
-            className={'sidebar-item ' + (view === v ? 'active' : '')}
-            onClick={() => setView(v)}
-          >
-            {v === 'browser'
-              ? '📷 Products'
-              : v === 'preview'
-                ? '👁 Preview'
-                : v === 'settings'
-                  ? '⚙ Settings'
-                  : '📋 Report'}
-            {v === 'browser' && selected.size > 0 ? ` (${selected.size})` : ''}
+        <div className="sidebar-title">
+          <div className="brand-mark">SP</div>
+          <div className="brand-copy">
+            <div className="brand-name">Sunshine</div>
+            <div className="brand-subtitle">Padstal Ads</div>
           </div>
-        ))}
+        </div>
+        <nav className="sidebar-nav">
+          {navItems.map((item) => (
+            <div
+              key={item.view}
+              className={'sidebar-item ' + (view === item.view ? 'active' : '')}
+              onClick={() => setView(item.view)}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span>
+                {item.label}
+                {item.view === 'browser' && selected.size > 0 ? ` (${selected.size})` : ''}
+              </span>
+            </div>
+          ))}
+        </nav>
         <div style={{ flex: 1 }} />
-        <div style={{ padding: 12, borderTop: '1px solid #1f2937' }}>
-          <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>Text source</div>
+        <div className="sidebar-block">
+          <div className="sidebar-meta">Text source</div>
           <select
             value={settings.dataSource}
             onChange={(e) => updateSettings({ dataSource: e.target.value as any })}
@@ -289,16 +311,9 @@ export default function App() {
             <option value="demo">Demo text</option>
           </select>
         </div>
-        <div style={{ padding: 12, borderTop: '1px solid #1f2937' }}>
-          <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>Output folder</div>
-          <div
-            style={{
-              fontSize: 11,
-              color: settings.outputFolder ? '#34d399' : '#f87171',
-              wordBreak: 'break-all',
-              marginBottom: 6,
-            }}
-          >
+        <div className="sidebar-block">
+          <div className="sidebar-meta">Output folder</div>
+          <div className="path-preview" style={!settings.outputFolder ? { color: '#ff7c8b' } : undefined}>
             {settings.outputFolder || '(not set)'}
           </div>
           <button
@@ -309,7 +324,7 @@ export default function App() {
               if (f) await updateSettings({ outputFolder: f });
             }}
           >
-            📁 Set output folder
+            Set output folder
           </button>
           {settings.outputFolder && (
             <button
@@ -317,11 +332,11 @@ export default function App() {
               style={{ width: '100%', marginBottom: 8, fontSize: 11 }}
               onClick={() => window.api.openPath(settings.outputFolder)}
             >
-              📂 Open output folder
+              Open output folder
             </button>
           )}
           <button onClick={generate} disabled={!!busy} style={{ width: '100%' }}>
-            ⚡ Generate {selected.size > 0 ? `(${selected.size})` : ''}
+            Generate {selected.size > 0 ? `(${selected.size})` : ''}
           </button>
         </div>
       </aside>

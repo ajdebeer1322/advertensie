@@ -8,6 +8,8 @@ export interface RenderInput {
   productImagePath: string;
   description: string;
   price: string;
+  /** Editor preview can render the cached non-text base; text is live in the UI. */
+  editorPreview?: boolean;
   /** Optional font file paths loaded into @font-face inside the SVG. */
   embeddedFonts?: { family: string; file: string }[];
   /** Optional matched sheet row, used to resolve custom element sheetColumn bindings. */
@@ -18,6 +20,9 @@ export interface RenderResult {
   buffer: Buffer;
   format: 'png' | 'jpg';
 }
+
+const baseCache = new Map<string, Buffer>();
+const MAX_BASE_CACHE = 8;
 
 /** Main composition. Layers in order:
  * 1. Base product image (fit into productBox)
@@ -32,16 +37,7 @@ export async function renderAd(input: RenderInput): Promise<RenderResult> {
   const W = settings.canvasWidth;
   const H = settings.canvasHeight;
 
-  // White base canvas
-  const base = sharp({
-    create: {
-      width: W,
-      height: H,
-      channels: 4,
-      background: { r: 255, g: 255, b: 255, alpha: 1 },
-    },
-  });
-
+  const baseBuffer = await getBaseBuffer(input);
   const composites: sharp.OverlayOptions[] = [];
 
   const addLayer = async (buf: Buffer, box: Box) => {
@@ -49,35 +45,8 @@ export async function renderAd(input: RenderInput): Promise<RenderResult> {
     if (clipped) composites.push({ input: clipped.buffer, left: clipped.left, top: clipped.top });
   };
 
-  // Product image fit into productBox
-  if (fs.existsSync(productImagePath)) {
-    const fitted = await sharp(productImagePath)
-      .resize(Math.max(1, settings.productBox.width), Math.max(1, settings.productBox.height), {
-        fit: 'cover',
-        position: 'centre',
-      })
-      .png()
-      .toBuffer();
-    await addLayer(fitted, settings.productBox);
-  }
-
-  // Overlays
-  const overlaySteps: { file: string; box: Box }[] = [
-    { file: settings.headerOverlay, box: settings.headerBox },
-    { file: settings.descriptionOverlay, box: settings.descriptionBox },
-    { file: settings.priceOverlay, box: settings.priceBox },
-  ];
-  for (const s of overlaySteps) {
-    if (s.file && fs.existsSync(s.file)) {
-      const buf = await sharp(s.file)
-        .resize(Math.max(1, s.box.width), Math.max(1, s.box.height), {
-          fit: 'contain',
-          background: { r: 0, g: 0, b: 0, alpha: 0 },
-        })
-        .png()
-        .toBuffer();
-      await addLayer(buf, s.box);
-    }
+  if (input.editorPreview) {
+    return { buffer: baseBuffer, format: 'png' };
   }
 
   // Description text
@@ -180,7 +149,7 @@ export async function renderAd(input: RenderInput): Promise<RenderResult> {
     }
   }
 
-  const pipeline = base.composite(composites);
+  const pipeline = sharp(baseBuffer).composite(composites);
 
   let buffer: Buffer;
   if (settings.exportFormat === 'jpg') {
@@ -189,6 +158,91 @@ export async function renderAd(input: RenderInput): Promise<RenderResult> {
     buffer = await pipeline.png().toBuffer();
   }
   return { buffer, format: settings.exportFormat };
+}
+
+async function getBaseBuffer(input: RenderInput): Promise<Buffer> {
+  const { settings, productImagePath } = input;
+  const W = settings.canvasWidth;
+  const H = settings.canvasHeight;
+  const key = JSON.stringify({
+    productImagePath,
+    productMtime: fileMtime(productImagePath),
+    W,
+    H,
+    productBox: settings.productBox,
+    headerOverlay: settings.headerOverlay,
+    headerMtime: fileMtime(settings.headerOverlay),
+    headerBox: settings.headerBox,
+    descriptionOverlay: settings.descriptionOverlay,
+    descriptionMtime: fileMtime(settings.descriptionOverlay),
+    descriptionBox: settings.descriptionBox,
+    priceOverlay: settings.priceOverlay,
+    priceMtime: fileMtime(settings.priceOverlay),
+    priceBox: settings.priceBox,
+  });
+  const cached = baseCache.get(key);
+  if (cached) return cached;
+
+  const base = sharp({
+    create: {
+      width: W,
+      height: H,
+      channels: 4,
+      background: { r: 255, g: 255, b: 255, alpha: 1 },
+    },
+  });
+  const composites: sharp.OverlayOptions[] = [];
+  const addLayer = async (buf: Buffer, box: Box) => {
+    const clipped = await clipToCanvas(buf, box, W, H);
+    if (clipped) composites.push({ input: clipped.buffer, left: clipped.left, top: clipped.top });
+  };
+
+  if (fs.existsSync(productImagePath)) {
+    const fitted = await sharp(productImagePath)
+      .resize(Math.max(1, settings.productBox.width), Math.max(1, settings.productBox.height), {
+        fit: 'cover',
+        position: 'centre',
+      })
+      .png()
+      .toBuffer();
+    await addLayer(fitted, settings.productBox);
+  }
+
+  const overlaySteps: { file: string; box: Box }[] = [
+    { file: settings.headerOverlay, box: settings.headerBox },
+    { file: settings.descriptionOverlay, box: settings.descriptionBox },
+    { file: settings.priceOverlay, box: settings.priceBox },
+  ];
+  for (const s of overlaySteps) {
+    if (s.file && fs.existsSync(s.file)) {
+      const buf = await sharp(s.file)
+        .resize(Math.max(1, s.box.width), Math.max(1, s.box.height), {
+          fit: 'contain',
+          background: { r: 0, g: 0, b: 0, alpha: 0 },
+        })
+        .png()
+        .toBuffer();
+      await addLayer(buf, s.box);
+    }
+  }
+
+  const buffer = await base.composite(composites).png().toBuffer();
+  baseCache.set(key, buffer);
+  while (baseCache.size > MAX_BASE_CACHE) {
+    const first = baseCache.keys().next().value;
+    if (!first) break;
+    baseCache.delete(first);
+  }
+  return buffer;
+}
+
+function fileMtime(file: string): number {
+  if (!file || !fs.existsSync(file)) return 0;
+  try {
+    return fs.statSync(file).mtimeMs;
+  } catch {
+    return 0;
+  }
 }
 
 /** Expand `\n` escape sequences into actual newlines, and normalize CRLF. */

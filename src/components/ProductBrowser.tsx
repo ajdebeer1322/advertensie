@@ -61,12 +61,12 @@ export function ProductBrowser(p: Props) {
       <div className="card">
         <h3>Product Folder</h3>
         <div className="toolbar">
-          <button onClick={p.onPickFolder}>📁 Choose folder</button>
+          <button onClick={p.onPickFolder}>Choose folder</button>
           <button className="secondary" onClick={p.onRefresh}>
-            🔄 Refresh images
+            Refresh images
           </button>
           <button className="secondary" onClick={p.onRefreshSheet}>
-            📊 Refresh sheet
+            Refresh sheet
           </button>
           <span className="muted">{p.currentFolder || '(no folder set)'}</span>
         </div>
