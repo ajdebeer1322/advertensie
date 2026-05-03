@@ -16,6 +16,23 @@ type GenerationSummary = {
   failed: { imagePath: string; reason: string }[];
   skipped: { imagePath: string; reason: string }[];
 };
+type PreflightIssue = {
+  level: 'warn' | 'error';
+  imagePath: string;
+  reason: string;
+};
+type PendingGeneration = {
+  totalSelected: number;
+  items: {
+    imagePath: string;
+    description: string;
+    price: string;
+    keyName: string;
+    sheetRow?: Record<string, string>;
+    settingsOverride?: Partial<AppSettings>;
+  }[];
+  skipped: { imagePath: string; reason: string }[];
+};
 
 export default function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -30,6 +47,8 @@ export default function App() {
   const [folderFonts, setFolderFonts] = useState<FolderFont[]>([]);
   const [report, setReport] = useState<ReportEntry[]>([]);
   const [lastSummary, setLastSummary] = useState<GenerationSummary | null>(null);
+  const [preflightIssues, setPreflightIssues] = useState<PreflightIssue[] | null>(null);
+  const [pendingGeneration, setPendingGeneration] = useState<PendingGeneration | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const saveTimer = useRef<number | null>(null);
   const pendingSave = useRef<Partial<AppSettings>>({});
@@ -181,6 +200,68 @@ export default function App() {
     log('info', `Found ${list.length} images`);
   }, [settings?.productFolder, log]);
 
+  const runBatch = useCallback(async (payload: PendingGeneration) => {
+    if (!settings) return;
+    const { items, skipped, totalSelected } = payload;
+    setBusy(`Rendering 0/${items.length}?`);
+    const stop = window.api.onBatchProgress((m) => {
+      setBusy(`Rendering ${m.index}/${m.total}?`);
+    });
+    try {
+      const res = await window.api.renderBatch({
+        settings,
+        items,
+        embeddedFonts: folderFonts,
+      });
+      if (res.ok) {
+        const created: { imagePath: string; outPath: string }[] = [];
+        const failed: { imagePath: string; reason: string }[] = [];
+        log('ok', `Export complete ? ${res.success} ok / ${res.failure} failed`);
+        for (const r of res.results) {
+          if (r.error) {
+            failed.push({ imagePath: r.imagePath, reason: r.error });
+            log('fail', `${r.imagePath} ? ${r.error}`);
+          } else {
+            created.push({ imagePath: r.imagePath, outPath: r.outPath || '' });
+            log('ok', `${r.imagePath} ? ${r.outPath}`);
+          }
+        }
+        setLastSummary({
+          finishedAt: Date.now(),
+          totalSelected,
+          attempted: items.length,
+          created,
+          failed,
+          skipped,
+        });
+      } else {
+        log('fail', res.error);
+        setLastSummary({
+          finishedAt: Date.now(),
+          totalSelected,
+          attempted: items.length,
+          created: [],
+          failed: items.map((i) => ({ imagePath: i.imagePath, reason: res.error })),
+          skipped,
+        });
+      }
+    } catch (e: any) {
+      log('fail', e.message || String(e));
+      setLastSummary({
+        finishedAt: Date.now(),
+        totalSelected,
+        attempted: items.length,
+        created: [],
+        failed: items.map((i) => ({ imagePath: i.imagePath, reason: e.message || String(e) })),
+        skipped,
+      });
+    } finally {
+      stop();
+      setBusy(null);
+      setView('report');
+    }
+  }, [settings, folderFonts, log]);
+
   const generate = useCallback(async () => {
     if (!settings) return;
     if (selected.size === 0) {
@@ -193,23 +274,20 @@ export default function App() {
     }
     let sheetRows = rows;
     if (settings.dataSource === 'sheet' && sheetRows.length === 0) {
-      log('info', 'No sheet data loaded — fetching now');
+      log('info', 'No sheet data loaded ? fetching now');
       sheetRows = (await refreshSheet()) || [];
     }
 
-    const items: {
-      imagePath: string;
-      description: string;
-      price: string;
-      keyName: string;
-      sheetRow?: Record<string, string>;
-      settingsOverride?: Partial<AppSettings>;
-    }[] = [];
+    const items: PendingGeneration['items'] = [];
     const skipped: { imagePath: string; reason: string }[] = [];
+    const issues: PreflightIssue[] = [];
+
     for (const p of selected) {
       const item = images.find((i) => i.path === p);
       if (!item) {
-        skipped.push({ imagePath: p, reason: 'Image no longer exists in folder' });
+        const reason = 'Image no longer exists in folder';
+        skipped.push({ imagePath: p, reason });
+        issues.push({ level: 'error', imagePath: p, reason });
         continue;
       }
       const keyName = imageKey(item.name);
@@ -217,22 +295,25 @@ export default function App() {
       let desc = '';
       let price = '';
       let sheetRow: Record<string, string> | undefined;
+
       if (settings.dataSource === 'demo') {
         desc = settings.demoDescription;
         price = settings.demoPrice;
       } else if (settings.dataSource === 'sheet') {
         const row = findRow(sheetRows, item.name, settings.keyColumn, settings.caseSensitiveMatch);
         if (!row) {
-          log('fail', `No sheet row for ${item.name}`);
-          skipped.push({ imagePath: item.path, reason: 'No matching sheet row' });
+          const reason = 'No matching sheet row';
+          skipped.push({ imagePath: item.path, reason });
+          issues.push({ level: 'error', imagePath: item.path, reason });
           continue;
         }
         desc = row[settings.descriptionColumn] || '';
         price = row[settings.priceColumn] || '';
         sheetRow = row;
-        if (!desc) log('fail', `Missing description for ${item.name}`);
-        if (!price) log('fail', `Missing price for ${item.name}`);
+        if (!desc) issues.push({ level: 'warn', imagePath: item.path, reason: 'Missing description' });
+        if (!price) issues.push({ level: 'warn', imagePath: item.path, reason: 'Missing price' });
       }
+
       items.push({
         imagePath: item.path,
         description: desc,
@@ -257,64 +338,14 @@ export default function App() {
       return;
     }
 
-    setBusy(`Rendering 0/${items.length}…`);
-    const stop = window.api.onBatchProgress((m) => {
-      setBusy(`Rendering ${m.index}/${m.total}…`);
-    });
-    try {
-      const res = await window.api.renderBatch({
-        settings,
-        items,
-        embeddedFonts: folderFonts,
-      });
-      if (res.ok) {
-        const created: { imagePath: string; outPath: string }[] = [];
-        const failed: { imagePath: string; reason: string }[] = [];
-        log('ok', `Export complete ? ${res.success} ok / ${res.failure} failed`);
-        for (const r of res.results) {
-          if (r.error) {
-            failed.push({ imagePath: r.imagePath, reason: r.error });
-            log('fail', `${r.imagePath} ? ${r.error}`);
-          } else {
-            created.push({ imagePath: r.imagePath, outPath: r.outPath || '' });
-            log('ok', `${r.imagePath} ? ${r.outPath}`);
-          }
-        }
-        setLastSummary({
-          finishedAt: Date.now(),
-          totalSelected: selected.size,
-          attempted: items.length,
-          created,
-          failed,
-          skipped,
-        });
-      } else {
-        log('fail', res.error);
-        setLastSummary({
-          finishedAt: Date.now(),
-          totalSelected: selected.size,
-          attempted: items.length,
-          created: [],
-          failed: items.map((i) => ({ imagePath: i.imagePath, reason: res.error })),
-          skipped,
-        });
-      }
-    } catch (e: any) {
-      log('fail', e.message || String(e));
-      setLastSummary({
-        finishedAt: Date.now(),
-        totalSelected: selected.size,
-        attempted: items.length,
-        created: [],
-        failed: items.map((i) => ({ imagePath: i.imagePath, reason: e.message || String(e) })),
-        skipped,
-      });
-    } finally {
-      stop();
-      setBusy(null);
-      setView('report');
+    if (issues.length > 0) {
+      setPendingGeneration({ totalSelected: selected.size, items, skipped });
+      setPreflightIssues(issues);
+      return;
     }
-  }, [settings, selected, images, rows, folderFonts, log, refreshSheet]);
+
+    await runBatch({ totalSelected: selected.size, items, skipped });
+  }, [settings, selected, rows, images, refreshSheet, runBatch, log]);
 
   const allFonts = useMemo(() => {
     const sys = systemFonts.map((f) => f);
@@ -469,6 +500,48 @@ export default function App() {
           />
         )}
 
+
+        {preflightIssues && pendingGeneration && (
+          <div className="modal-backdrop">
+            <div className="modal-card">
+              <h3 style={{ marginTop: 0 }}>Pre-Generate Check</h3>
+              <div className="muted" style={{ marginBottom: 10 }}>
+                Found {preflightIssues.length} issue(s). Review before generating.
+              </div>
+              <div className="preflight-list">
+                {preflightIssues.map((it, i) => (
+                  <div
+                    key={`${it.imagePath}-${i}`}
+                    className={'report-line ' + (it.level === 'error' ? 'fail' : 'info')}
+                  >
+                    {it.imagePath} ? {it.reason}
+                  </div>
+                ))}
+              </div>
+              <div className="toolbar" style={{ justifyContent: 'flex-end', marginTop: 12, marginBottom: 0 }}>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    setPreflightIssues(null);
+                    setPendingGeneration(null);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    const payload = pendingGeneration;
+                    setPreflightIssues(null);
+                    setPendingGeneration(null);
+                    if (payload) await runBatch(payload);
+                  }}
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {busy && <div className="status-bar">{busy}</div>}
       </main>
     </div>

@@ -2108,3 +2108,31 @@ input[type="range"]::-webkit-slider-thumb {
 .editor-panel .inspector-slider-track {
   display: none;
 }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+
+.modal-card {
+  width: min(920px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+  background: #171a1f;
+  border: 1px solid rgba(232, 226, 214, 0.16);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+}
+
+.preflight-list {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid rgba(232, 226, 214, 0.12);
+  border-radius: 8px;
+}
