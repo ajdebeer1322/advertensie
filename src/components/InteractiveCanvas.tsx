@@ -76,6 +76,9 @@ interface Props {
   maxHeight?: number;
   /** Hide the built-in toolbar (parent renders its own). */
   hideToolbar?: boolean;
+  showGuides?: boolean;
+  resetZoomSignal?: number;
+  onZoomChange?: (zoom: number) => void;
   onTelemetry?: (t: {
     source: 'editor-preview' | 'export-preview';
     pending: number;
@@ -114,10 +117,15 @@ export function InteractiveCanvas({
   maxWidth,
   maxHeight,
   hideToolbar,
+  showGuides = true,
+  resetZoomSignal,
+  onZoomChange,
   onTelemetry,
 }: Props) {
+  const PAN_GUTTER = 320;
   const wrapRef = useRef<HTMLDivElement>(null);
   const [displaySize, setDisplaySize] = useState({ w: 800, h: 800 });
+  const [zoom, setZoom] = useState(1);
   const dragRef = useRef<DragState | null>(null);
   const setActive = onActiveChange;
   const setVisible = onVisibleChange;
@@ -153,9 +161,23 @@ export function InteractiveCanvas({
     return () => window.removeEventListener('resize', update);
   }, [maxWidth, maxHeight, settings.canvasWidth, settings.canvasHeight]);
 
-  const displayWidth = displaySize.w;
-  const displayHeight = displaySize.h;
+  const displayWidth = displaySize.w * zoom;
+  const displayHeight = displaySize.h * zoom;
   const scale = displayWidth / settings.canvasWidth;
+
+  useEffect(() => {
+    onZoomChange?.(zoom);
+  }, [zoom, onZoomChange]);
+
+  useEffect(() => {
+    setZoom(1);
+    requestAnimationFrame(() => {
+      const scroller = wrapRef.current?.parentElement;
+      if (!scroller) return;
+      scroller.scrollLeft = Math.max(0, (scroller.scrollWidth - scroller.clientWidth) / 2);
+      scroller.scrollTop = Math.max(0, (scroller.scrollHeight - scroller.clientHeight) / 2);
+    });
+  }, [resetZoomSignal]);
 
   useEffect(() => {
     baseImagesRef.current = baseImages;
@@ -337,9 +359,15 @@ export function InteractiveCanvas({
   const activeBox = active ? settings[active] : null;
 
   const isEditorPreview = !!productImagePath;
+  const handleWheelZoom = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.08 : 0.92;
+    setZoom((z) => Math.min(4, Math.max(0.25, z * factor)));
+  };
 
   return (
-    <div ref={wrapRef}>
+    <div ref={wrapRef} onWheel={handleWheelZoom} style={{ minWidth: '100%', minHeight: '100%' }}>
       {!hideToolbar && (
       <div className="toolbar" style={{ flexWrap: 'wrap' }}>
         <span className="muted">Show / edit:</span>
@@ -370,17 +398,30 @@ export function InteractiveCanvas({
       </div>
       )}
 
-      <div
-        style={{
-          position: 'relative',
-          width: displayWidth,
-          height: displayHeight,
-          margin: '0 auto',
-          background: '#fff',
-          boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
-          userSelect: 'none',
-        }}
-      >
+        <div
+          style={{
+            minWidth: '100%',
+            minHeight: '100%',
+            width: 'max-content',
+            height: 'max-content',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: PAN_GUTTER,
+            boxSizing: 'content-box',
+          }}
+        >
+        <div
+          style={{
+            position: 'relative',
+            width: displayWidth,
+            height: displayHeight,
+            background: '#fff',
+            boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
+            userSelect: 'none',
+            flex: '0 0 auto',
+          }}
+        >
         {isEditorPreview ? (
           <EditorBase
             settings={settings}
@@ -432,7 +473,8 @@ export function InteractiveCanvas({
             bold={settings.priceBold}
           />
         )}
-        {getAllBoxes(settings)
+        {showGuides &&
+          getAllBoxes(settings)
           .filter((b) => visible[b.key] !== false)
           .map((b) => {
           const box = getBoxValue(settings, b.key);
@@ -474,6 +516,7 @@ export function InteractiveCanvas({
             </div>
           );
         })}
+        </div>
       </div>
     </div>
   );

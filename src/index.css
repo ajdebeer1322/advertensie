@@ -701,8 +701,8 @@ label {
 .canvas-stage {
   flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   padding: 18px;
   overflow: auto;
   background:
@@ -713,6 +713,10 @@ label {
     #161a20;
   background-position: 0 0, 0 10px, 10px -10px, -10px 0;
   background-size: 20px 20px;
+}
+
+.canvas-stage.panning {
+  cursor: grabbing;
 }
 
 .editor-panel {

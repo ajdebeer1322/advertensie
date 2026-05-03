@@ -56,6 +56,13 @@ export function PreviewPanel(p: Props) {
   );
 
   const [overrideMode, setOverrideMode] = useState(false);
+  const overrideActive = overrideMode || hasOverride;
+
+  // Override editing is image-scoped; reset editor preview state when switching images.
+  useEffect(() => {
+    setOverrideMode(false);
+    setLivePatch(null);
+  }, [currentKey]);
 
   // Route a settings patch — either to global settings or into the per-image override.
   const writePatch = useCallback(
@@ -92,6 +99,7 @@ export function PreviewPanel(p: Props) {
 
   // Side-panel state
   const [panelOpen, setPanelOpen] = useState(true);
+  const [liveView, setLiveView] = useState(false);
   const [openSection, setOpenSection] = useState<PanelSection>('description');
   const [active, setActive] = useState<BoxKey | null>('descriptionTextBox');
 
@@ -113,6 +121,15 @@ export function PreviewPanel(p: Props) {
 
   const canvasAreaRef = useRef<HTMLDivElement>(null);
   const [canvasMax, setCanvasMax] = useState({ w: 800, h: 800 });
+  const [zoomResetSignal, setZoomResetSignal] = useState(0);
+  const [zoomFactor, setZoomFactor] = useState(1);
+  const [isPanning, setIsPanning] = useState(false);
+  const panRef = useRef<{
+    startX: number;
+    startY: number;
+    startScrollLeft: number;
+    startScrollTop: number;
+  } | null>(null);
   useEffect(() => {
     const update = () => {
       if (!canvasAreaRef.current) return;
@@ -123,6 +140,27 @@ export function PreviewPanel(p: Props) {
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
   }, [panelOpen]);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const state = panRef.current;
+      const el = canvasAreaRef.current;
+      if (!state || !el) return;
+      e.preventDefault();
+      el.scrollLeft = state.startScrollLeft - (e.clientX - state.startX);
+      el.scrollTop = state.startScrollTop - (e.clientY - state.startY);
+    };
+    const onUp = () => {
+      panRef.current = null;
+      setIsPanning(false);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
 
   useEffect(() => {
     setErr(null);
@@ -177,6 +215,23 @@ export function PreviewPanel(p: Props) {
           >
             ↷ Redo
           </button>
+          <button
+            className={liveView ? '' : 'secondary'}
+            onClick={() => setLiveView((v) => !v)}
+            title={liveView ? 'Show tags and guide lines' : 'Hide tags and guide lines'}
+          >
+            {liveView ? 'Live view on' : 'Live view'}
+          </button>
+          <button
+            className="secondary"
+            onClick={() => setZoomResetSignal((v) => v + 1)}
+            title="Reset zoom to fit"
+          >
+            Reset zoom
+          </button>
+          <span className="muted" title="Current preview zoom">
+            {Math.round(zoomFactor * 100)}%
+          </span>
           <span className="muted" style={{ flex: 1 }}>
             {current ? `${idx + 1}/${list.length} — ${list[idx]?.name}` : 'Nothing to preview'}
             {hasOverride && (
@@ -186,17 +241,31 @@ export function PreviewPanel(p: Props) {
             )}
           </span>
           <button
-            className={overrideMode ? '' : 'secondary'}
-            onClick={() => setOverrideMode((v) => !v)}
+            className={overrideActive ? '' : 'secondary'}
+            onClick={() => {
+              if (hasOverride) {
+                resetOverride();
+                setOverrideMode(false);
+                setLivePatch(null);
+                return;
+              }
+              setOverrideMode((v) => !v);
+            }}
             disabled={!currentKey}
             title={
-              overrideMode
-                ? 'Edits go to this image only — click to return to global edits'
-                : 'Make edits affect only this image'
+              hasOverride
+                ? 'Override is active - click to remove override for this image'
+                : overrideMode
+                  ? 'Edits go to this image only - click to return to global edits'
+                  : 'Make edits affect only this image'
             }
-            style={overrideMode ? { background: '#fbbf24', color: '#111827' } : undefined}
+            style={overrideActive ? { background: '#fbbf24', color: '#111827' } : undefined}
           >
-            {overrideMode ? '✓ Editing override' : '✏️ Override this image'}
+            {hasOverride
+              ? 'Override active (click to disable)'
+              : overrideMode
+                ? 'Editing override'
+                : 'Override this image'}
           </button>
           {hasOverride && (
             <button
@@ -222,7 +291,26 @@ export function PreviewPanel(p: Props) {
           </div>
         )}
 
-        <div ref={canvasAreaRef} className="canvas-stage">
+        <div
+          ref={canvasAreaRef}
+          className={'canvas-stage' + (isPanning ? ' panning' : '')}
+          onAuxClick={(e) => {
+            if (e.button === 1) e.preventDefault();
+          }}
+          onMouseDown={(e) => {
+            if (e.button !== 1) return;
+            const el = canvasAreaRef.current;
+            if (!el) return;
+            e.preventDefault();
+            panRef.current = {
+              startX: e.clientX,
+              startY: e.clientY,
+              startScrollLeft: el.scrollLeft,
+              startScrollTop: el.scrollTop,
+            };
+            setIsPanning(true);
+          }}
+        >
           <InteractiveCanvas
             settings={effective}
             previewDataUrl={dataUrl}
@@ -238,6 +326,9 @@ export function PreviewPanel(p: Props) {
             maxWidth={canvasMax.w}
             maxHeight={canvasMax.h}
             hideToolbar
+            showGuides={!liveView}
+            resetZoomSignal={zoomResetSignal}
+            onZoomChange={setZoomFactor}
             onTelemetry={setTelemetry}
           />
         </div>

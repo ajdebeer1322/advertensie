@@ -8,6 +8,14 @@ import { findRow } from './utils/matching';
 import { imageKey } from './utils/overrides';
 
 type View = 'browser' | 'preview' | 'settings' | 'report';
+type GenerationSummary = {
+  finishedAt: number;
+  totalSelected: number;
+  attempted: number;
+  created: { imagePath: string; outPath: string }[];
+  failed: { imagePath: string; reason: string }[];
+  skipped: { imagePath: string; reason: string }[];
+};
 
 export default function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -21,6 +29,7 @@ export default function App() {
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
   const [folderFonts, setFolderFonts] = useState<FolderFont[]>([]);
   const [report, setReport] = useState<ReportEntry[]>([]);
+  const [lastSummary, setLastSummary] = useState<GenerationSummary | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const saveTimer = useRef<number | null>(null);
   const pendingSave = useRef<Partial<AppSettings>>({});
@@ -196,9 +205,13 @@ export default function App() {
       sheetRow?: Record<string, string>;
       settingsOverride?: Partial<AppSettings>;
     }[] = [];
+    const skipped: { imagePath: string; reason: string }[] = [];
     for (const p of selected) {
       const item = images.find((i) => i.path === p);
-      if (!item) continue;
+      if (!item) {
+        skipped.push({ imagePath: p, reason: 'Image no longer exists in folder' });
+        continue;
+      }
       const keyName = imageKey(item.name);
       const settingsOverride = settings.overrides?.[keyName];
       let desc = '';
@@ -211,6 +224,7 @@ export default function App() {
         const row = findRow(sheetRows, item.name, settings.keyColumn, settings.caseSensitiveMatch);
         if (!row) {
           log('fail', `No sheet row for ${item.name}`);
+          skipped.push({ imagePath: item.path, reason: 'No matching sheet row' });
           continue;
         }
         desc = row[settings.descriptionColumn] || '';
@@ -231,6 +245,15 @@ export default function App() {
 
     if (items.length === 0) {
       log('fail', 'Nothing to render');
+      setLastSummary({
+        finishedAt: Date.now(),
+        totalSelected: selected.size,
+        attempted: 0,
+        created: [],
+        failed: [],
+        skipped,
+      });
+      setView('report');
       return;
     }
 
@@ -245,19 +268,51 @@ export default function App() {
         embeddedFonts: folderFonts,
       });
       if (res.ok) {
-        log('ok', `Export complete — ${res.success} ok / ${res.failure} failed`);
+        const created: { imagePath: string; outPath: string }[] = [];
+        const failed: { imagePath: string; reason: string }[] = [];
+        log('ok', `Export complete ? ${res.success} ok / ${res.failure} failed`);
         for (const r of res.results) {
-          if (r.error) log('fail', `${r.imagePath} → ${r.error}`);
-          else log('ok', `${r.imagePath} → ${r.outPath}`);
+          if (r.error) {
+            failed.push({ imagePath: r.imagePath, reason: r.error });
+            log('fail', `${r.imagePath} ? ${r.error}`);
+          } else {
+            created.push({ imagePath: r.imagePath, outPath: r.outPath || '' });
+            log('ok', `${r.imagePath} ? ${r.outPath}`);
+          }
         }
+        setLastSummary({
+          finishedAt: Date.now(),
+          totalSelected: selected.size,
+          attempted: items.length,
+          created,
+          failed,
+          skipped,
+        });
       } else {
         log('fail', res.error);
+        setLastSummary({
+          finishedAt: Date.now(),
+          totalSelected: selected.size,
+          attempted: items.length,
+          created: [],
+          failed: items.map((i) => ({ imagePath: i.imagePath, reason: res.error })),
+          skipped,
+        });
       }
     } catch (e: any) {
       log('fail', e.message || String(e));
+      setLastSummary({
+        finishedAt: Date.now(),
+        totalSelected: selected.size,
+        attempted: items.length,
+        created: [],
+        failed: items.map((i) => ({ imagePath: i.imagePath, reason: e.message || String(e) })),
+        skipped,
+      });
     } finally {
       stop();
       setBusy(null);
+      setView('report');
     }
   }, [settings, selected, images, rows, folderFonts, log, refreshSheet]);
 
@@ -406,7 +461,13 @@ export default function App() {
             log={log}
           />
         )}
-        {view === 'report' && <ReportPanel report={report} onClear={() => setReport([])} />}
+        {view === 'report' && (
+          <ReportPanel
+            report={report}
+            summary={lastSummary}
+            onClear={() => setReport([])}
+          />
+        )}
 
         {busy && <div className="status-bar">{busy}</div>}
       </main>
