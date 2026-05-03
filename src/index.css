@@ -1528,12 +1528,13 @@ input[type="range"]::-webkit-slider-thumb {
 .editor-panel {
   width: min(100%, 392px);
   flex: 0 1 392px;
+  height: 100%;
   max-height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;
-  gap: 8px;
-  padding: 10px;
+  gap: 12px;
+  padding: 12px;
 }
 
 .editor-panel-header {
@@ -1551,14 +1552,14 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .editor-panel-title div {
-  font-size: 13px;
-  line-height: 1.1;
+  font-size: 15px;
+  line-height: 1.2;
 }
 
 .editor-panel-title span,
 .editor-live-card span {
   margin-top: 2px;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.2;
 }
 
@@ -1572,12 +1573,12 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .editor-panel > div.editor-section + div.editor-section {
-  margin-top: -8px;
+  margin-top: 0;
 }
 
 .editor-section-toggle {
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 36px;
+  padding: 0 12px;
   cursor: pointer;
   background: rgba(255, 255, 255, 0.02);
   color: #e5e7eb;
@@ -1585,7 +1586,7 @@ input[type="range"]::-webkit-slider-thumb {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -1601,65 +1602,66 @@ input[type="range"]::-webkit-slider-thumb {
 
 .editor-section-label > span {
   width: 12px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .editor-section-toggle > span:last-child,
 .editor-section-chevron {
   flex: 0 0 auto;
-  font-size: 11px;
+  font-size: 13px;
   color: #cfc7ba;
 }
 
 .editor-section-body {
-  padding: 12px !important;
+  padding: 16px 14px !important;
 }
 
 .inspector-stack {
-  gap: 12px;
+  gap: 14px;
 }
 
 .inspector-group {
-  padding-bottom: 12px;
+  padding-bottom: 14px;
 }
 
 .inspector-group-title {
   margin-bottom: 8px;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .inspector-grid {
-  gap: 10px;
+  gap: 12px;
 }
 
 .inspector-pair-grid,
 .inspector-inline-grid {
-  gap: 8px;
+  gap: 10px;
 }
 
 .inspector-field label,
 .inspector-slider label,
 .align-field label {
-  margin-bottom: 3px;
-  font-size: 10px;
+  margin-bottom: 5px;
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .font-picker {
   gap: 8px;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .font-picker-trigger {
-  min-height: 40px;
+  min-height: 44px;
   padding: 8px 12px;
-  font-size: 14px;
+  font-size: 15px;
   gap: 8px;
 }
 
 .font-preview {
-  min-height: 46px;
+  min-height: 56px;
   padding: 8px 12px;
-  font-size: 14px;
+  font-size: 16px;
   display: grid;
   gap: 3px;
   align-content: center;
@@ -1679,7 +1681,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 .font-picker-name {
   flex: 1;
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 400;
 }
 
@@ -1688,12 +1690,12 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .font-preview-sample {
-  font-size: 15px;
+  font-size: 20px;
   line-height: 1.05;
 }
 
 .font-preview-name {
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 400;
 }
 
@@ -1728,16 +1730,16 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .inspector-slider {
-  gap: 3px;
+  gap: 6px;
 }
 
 .inspector-slider-compact {
-  gap: 2px;
+  gap: 4px;
 }
 
 .inspector-slider-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 126px;
+  grid-template-columns: minmax(0, 1fr) 142px;
   gap: 8px;
   align-items: center;
 }
@@ -1758,45 +1760,45 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .inspector-slider-control-row {
-  grid-template-columns: 28px minmax(0, 1fr) 28px;
-  gap: 4px;
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  gap: 6px;
   align-items: center;
 }
 
 .inspector-slider-compact .inspector-slider-header {
-  grid-template-columns: minmax(0, 1fr) 112px;
+  grid-template-columns: minmax(0, 1fr) 132px;
   gap: 6px;
 }
 
 .inspector-slider-compact .inspector-slider-control-row {
-  grid-template-columns: 24px minmax(0, 1fr) 24px;
-  gap: 3px;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  gap: 5px;
 }
 
 .inspector-stepper-btn {
-  width: 28px;
-  min-width: 28px;
-  min-height: 28px;
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
   font-size: 12px;
 }
 
 .inspector-slider-compact .inspector-stepper-btn {
-  width: 24px;
-  min-width: 24px;
-  min-height: 24px;
+  width: 28px;
+  min-width: 28px;
+  min-height: 28px;
   font-size: 11px;
 }
 
 .inspector-slider-value {
-  height: 28px;
-  min-height: 28px;
+  height: 32px;
+  min-height: 32px;
   padding: 3px 6px;
   font-size: 12px;
 }
 
 .inspector-slider-compact .inspector-slider-value {
-  height: 24px;
-  min-height: 24px;
+  height: 28px;
+  min-height: 28px;
   padding: 2px 5px;
   font-size: 11px;
 }
@@ -1830,14 +1832,14 @@ input[type="range"]::-webkit-slider-thumb {
 
 .inspector-checks {
   gap: 8px;
-  min-height: 20px;
+  min-height: 24px;
 }
 
 .inspector-checks-compact {
-  align-items: end;
+  align-items: center;
   justify-content: flex-start;
   min-height: 100%;
-  padding-top: 18px;
+  padding-top: 16px;
 }
 
 .inspector-check {
@@ -1849,7 +1851,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .field-grid {
-  gap: 8px;
+  gap: 10px;
 }
 
 .editor-live-card {
@@ -1917,4 +1919,188 @@ input[type="range"]::-webkit-slider-thumb {
   .font-picker {
     grid-template-columns: 1fr;
   }
+}
+
+/* Spacious, scrollable editor panel */
+.preview-layout {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.preview-workspace {
+  min-height: 0;
+}
+
+.editor-panel {
+  height: calc(100vh - 36px);
+  max-height: calc(100vh - 36px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-panel-header {
+  flex: 0 0 auto;
+}
+
+.editor-panel-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
+}
+
+.editor-panel-scroll > .editor-section {
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid rgba(232, 226, 214, 0.12);
+  border-radius: 6px;
+  background: rgba(25, 29, 35, 0.82);
+}
+
+.editor-panel-scroll > .editor-section + .editor-section {
+  margin-top: 0;
+}
+
+.editor-panel-scroll .editor-section-body {
+  padding: 18px 14px !important;
+}
+
+.editor-panel .inspector-pair-grid {
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.editor-panel .inspector-inline-grid {
+  gap: 12px;
+}
+
+.editor-panel .inspector-slider-header,
+.editor-panel .inspector-slider-compact .inspector-slider-header {
+  grid-template-columns: minmax(0, 1fr) 148px;
+  gap: 12px;
+}
+
+.editor-panel .inspector-slider-control-row,
+.editor-panel .inspector-slider-compact .inspector-slider-control-row {
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  gap: 6px;
+}
+
+.editor-panel .inspector-slider-track {
+  min-height: 14px;
+}
+
+.editor-panel .inspector-checks-compact {
+  padding-top: 0;
+  min-height: auto;
+}
+
+.editor-panel .editor-live-card,
+.editor-panel .editor-tip {
+  flex: 0 0 auto;
+}
+
+/* Balanced inspector sizing after removing slider tracks */
+.editor-panel {
+  width: min(100%, 384px);
+  flex-basis: 384px;
+  gap: 10px;
+  padding: 10px;
+}
+
+.editor-panel-scroll {
+  gap: 10px;
+}
+
+.editor-panel-scroll .editor-section-body {
+  padding: 14px 12px !important;
+}
+
+.editor-panel .inspector-stack {
+  gap: 12px;
+}
+
+.editor-panel .inspector-group {
+  padding-bottom: 12px;
+}
+
+.editor-panel .inspector-group-title {
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.editor-panel .inspector-grid {
+  gap: 10px;
+}
+
+.editor-panel .inspector-pair-grid {
+  gap: 12px;
+}
+
+.editor-panel .inspector-field label,
+.editor-panel .inspector-slider label,
+.editor-panel .align-field label {
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.editor-panel .font-picker {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.editor-panel .font-picker-trigger {
+  min-height: 38px;
+  padding: 7px 10px;
+}
+
+.editor-panel .font-preview {
+  min-height: 50px;
+  padding: 8px 10px;
+}
+
+.editor-panel .font-picker-name,
+.editor-panel .font-preview-name,
+.editor-panel .font-preview-sample {
+  font-size: 17px;
+}
+
+.editor-panel .inspector-slider {
+  gap: 0;
+}
+
+.editor-panel .inspector-slider-header,
+.editor-panel .inspector-slider-compact .inspector-slider-header {
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 10px;
+}
+
+.editor-panel .inspector-slider-control-row,
+.editor-panel .inspector-slider-compact .inspector-slider-control-row {
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  gap: 5px;
+}
+
+.editor-panel .inspector-stepper-btn,
+.editor-panel .inspector-slider-compact .inspector-stepper-btn {
+  width: 28px;
+  min-width: 28px;
+  min-height: 28px;
+}
+
+.editor-panel .inspector-slider-value,
+.editor-panel .inspector-slider-compact .inspector-slider-value {
+  height: 28px;
+  min-height: 28px;
+  cursor: ew-resize;
+  user-select: none;
+}
+
+.editor-panel .inspector-slider-track {
+  display: none;
 }

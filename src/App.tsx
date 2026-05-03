@@ -145,19 +145,21 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [undo, redo]);
 
-  const refreshSheet = useCallback(async () => {
-    if (!settings) return;
+  const refreshSheet = useCallback(async (): Promise<SheetRow[] | null> => {
+    if (!settings) return null;
     if (!settings.sheetUrl) {
       log('fail', 'Sheet URL not set');
-      return;
+      return null;
     }
     setBusy('Fetching sheet…');
     try {
       const data = await window.api.fetchSheet(settings.sheetUrl, settings.worksheet);
       setRows(data);
       log('info', `Loaded ${data.length} rows from "${settings.worksheet}"`);
+      return data;
     } catch (e: any) {
       log('fail', `Sheet fetch failed: ${e.message || e}`);
+      return null;
     } finally {
       setBusy(null);
     }
@@ -180,9 +182,10 @@ export default function App() {
       log('fail', 'Output folder not set');
       return;
     }
-    if (settings.dataSource === 'sheet' && rows.length === 0) {
+    let sheetRows = rows;
+    if (settings.dataSource === 'sheet' && sheetRows.length === 0) {
       log('info', 'No sheet data loaded — fetching now');
-      await refreshSheet();
+      sheetRows = (await refreshSheet()) || [];
     }
 
     const items: {
@@ -205,7 +208,7 @@ export default function App() {
         desc = settings.demoDescription;
         price = settings.demoPrice;
       } else if (settings.dataSource === 'sheet') {
-        const row = findRow(rows, item.name, settings.keyColumn, settings.caseSensitiveMatch);
+        const row = findRow(sheetRows, item.name, settings.keyColumn, settings.caseSensitiveMatch);
         if (!row) {
           log('fail', `No sheet row for ${item.name}`);
           continue;

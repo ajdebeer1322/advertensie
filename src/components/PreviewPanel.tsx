@@ -264,6 +264,7 @@ export function PreviewPanel(p: Props) {
               Reset
             </button>
           </div>
+          <section className="editor-panel-scroll">
           <Section
             title="Layers"
             icon="L"
@@ -396,6 +397,7 @@ export function PreviewPanel(p: Props) {
             <div><strong>Tip:</strong> Use Auto-fit to resize text to fit its container</div>
             <button type="button" className="secondary" aria-label="Dismiss tip">x</button>
           </div>
+          </section>
         </aside>
       )}
     </div>
@@ -816,6 +818,7 @@ function InspectorSlider({
   compact?: boolean;
 }) {
   const precision = step < 1 ? 2 : 0;
+  const dragRef = useRef<{ pointerId: number; startX: number; startValue: number } | null>(null);
   const clamp = (n: number) => Math.min(max, Math.max(min, n));
   const commit = (n: number) => {
     if (!Number.isFinite(n)) return;
@@ -824,13 +827,35 @@ function InspectorSlider({
   };
   const nudge = (dir: -1 | 1) => commit(value + step * dir);
   const id = `inspector-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-  const fill = `${((clamp(value) - min) / (max - min)) * 100}%`;
+  const dragScale = step < 1 ? 18 : 8;
+
+  const startDrag = (e: React.PointerEvent<HTMLInputElement>) => {
+    if (e.button !== 0) return;
+    dragRef.current = { pointerId: e.pointerId, startX: e.clientX, startValue: value };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const moveDrag = (e: React.PointerEvent<HTMLInputElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const delta = e.clientX - drag.startX;
+    if (Math.abs(delta) < 2) return;
+    e.preventDefault();
+    commit(drag.startValue + Math.round(delta / dragScale) * step);
+  };
+
+  const endDrag = (e: React.PointerEvent<HTMLInputElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    dragRef.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  };
 
   return (
     <div className={'inspector-slider' + (compact ? ' inspector-slider-compact' : '')}>
       <div className="inspector-slider-header">
         <div className="inspector-slider-label-row">
-          <label htmlFor={`${id}-range`} className="inspector-slider-label">{label}</label>
+          <label htmlFor={`${id}-value`} className="inspector-slider-label">{label}</label>
           {unit && <span className="inspector-unit">{unit}</span>}
         </div>
         <div className="inspector-slider-control-row">
@@ -852,23 +877,13 @@ function InspectorSlider({
             step={step}
             value={value}
             onChange={(e) => commit(Number(e.target.value))}
+            onPointerDown={startDrag}
+            onPointerMove={moveDrag}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+            title="Type a value, or drag left/right to adjust"
           />
         </div>
-      </div>
-      <div className="inspector-slider-track">
-        <input
-          id={`${id}-range`}
-          aria-labelledby={`${id}-value`}
-          className="inspector-slider-track-input"
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          style={{ '--slider-fill': fill } as React.CSSProperties}
-          onInput={(e) => commit(Number(e.currentTarget.value))}
-          onChange={(e) => commit(Number(e.target.value))}
-        />
       </div>
     </div>
   );

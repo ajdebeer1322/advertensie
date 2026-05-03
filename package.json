@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "electron:dev": "concurrently -k \"npm:dev\" \"wait-on http://localhost:5173 && tsc -p electron/tsconfig.json && cross-env ELECTRON_DEV=1 electron .\"",
     "electron:build": "npm run build && electron-builder --win",
+    "electron:portable": "npm run build && electron-builder --win portable --config.win.target=portable --config.win.signAndEditExecutable=false --config.directories.output=release-single",
     "start": "electron ."
   },
   "dependencies": {
@@ -46,8 +47,7 @@
       "package.json"
     ],
     "win": {
-      "target": "nsis",
-      "icon": "build/icon.ico"
+      "target": "nsis"
     },
     "nsis": {
       "oneClick": false,

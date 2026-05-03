@@ -162,7 +162,7 @@ export function registerIpc(ipc: IpcMain, getWin: () => BrowserWindow | null) {
           const filename = (merged.filenamePattern || '{image_name}.{ext}')
             .replace('{image_name}', item.keyName)
             .replace('{ext}', format === 'jpg' ? 'jpg' : 'png');
-          const outPath = path.join(outputDir, filename);
+          const outPath = uniqueOutputPath(outputDir, filename);
           fs.writeFileSync(outPath, buffer);
           results.push({ imagePath: item.imagePath, outPath });
           success++;
@@ -203,4 +203,15 @@ export function registerIpc(ipc: IpcMain, getWin: () => BrowserWindow | null) {
 function csv(v: string): string {
   if (/[,"\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
   return v;
+}
+
+function uniqueOutputPath(outputDir: string, filename: string): string {
+  const parsed = path.parse(filename);
+  let candidate = path.join(outputDir, filename);
+  let count = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(outputDir, `${parsed.name}-${count}${parsed.ext}`);
+    count++;
+  }
+  return candidate;
 }
