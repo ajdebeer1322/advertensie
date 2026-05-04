@@ -51,7 +51,11 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Sunshine Padstal Ads",
+      "deleteAppDataOnUninstall": false
     },
     "asarUnpack": [
       "**/node_modules/sharp/**/*",
