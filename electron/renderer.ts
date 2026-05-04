@@ -1,6 +1,8 @@
 import sharp from 'sharp';
 import * as fs from 'fs';
 import * as path from 'path';
+import { pathToFileURL } from 'url';
+import { BrowserWindow } from 'electron';
 import type { AppSettings, Box } from './settings';
 
 export interface RenderInput {
@@ -33,6 +35,14 @@ const MAX_BASE_CACHE = 8;
  * 6. Price text (SVG)
  */
 export async function renderAd(input: RenderInput): Promise<RenderResult> {
+  if (!input.editorPreview && BrowserWindow) {
+    try {
+      return await renderAdInChromium(input);
+    } catch (err) {
+      console.warn('Chromium render failed, falling back to Sharp renderer', err);
+    }
+  }
+
   const { settings, productImagePath } = input;
   const W = settings.canvasWidth;
   const H = settings.canvasHeight;
@@ -242,6 +252,206 @@ async function getBaseBuffer(input: RenderInput): Promise<Buffer> {
   return buffer;
 }
 
+async function renderAdInChromium(input: RenderInput): Promise<RenderResult> {
+  const { settings } = input;
+  const win = new BrowserWindow({
+    show: false,
+    width: settings.canvasWidth,
+    height: settings.canvasHeight,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      offscreen: true,
+      backgroundThrottling: false,
+      webSecurity: false,
+    },
+  });
+
+  try {
+    await win.loadURL(htmlDataUrl(buildChromiumHtml(input)));
+    await waitForImages(win);
+    const image = await win.webContents.capturePage({
+      x: 0,
+      y: 0,
+      width: settings.canvasWidth,
+      height: settings.canvasHeight,
+    });
+    let buffer = image.toPNG();
+    if (settings.exportFormat === 'jpg') {
+      buffer = await sharp(buffer).jpeg({ quality: settings.exportQuality }).toBuffer();
+    }
+    return { buffer, format: settings.exportFormat };
+  } finally {
+    if (!win.isDestroyed()) win.close();
+  }
+}
+
+function buildChromiumHtml(input: RenderInput): string {
+  const { settings } = input;
+  const layers: string[] = [];
+  layers.push(`<div class="canvas">`);
+  if (fs.existsSync(input.productImagePath)) {
+    layers.push(imageLayer(input.productImagePath, settings.productBox, 'cover'));
+  }
+  for (const layer of [
+    { file: settings.headerOverlay, box: settings.headerBox },
+    { file: settings.descriptionOverlay, box: settings.descriptionBox },
+    { file: settings.priceOverlay, box: settings.priceBox },
+  ]) {
+    if (layer.file && fs.existsSync(layer.file)) {
+      layers.push(imageLayer(layer.file, layer.box, 'contain'));
+    }
+  }
+
+  const descText = formatDescription(input.description, settings);
+  if (descText) {
+    layers.push(
+      textLayer(
+        buildTextSvg({
+          text: descText,
+          box: settings.descriptionTextBox,
+          font: settings.descriptionFont,
+          fontSize: settings.descriptionFontSize,
+          lineHeight: settings.descriptionLineHeight,
+          letterSpacing: settings.descriptionLetterSpacing,
+          color: settings.descriptionColor,
+          stroke: settings.descriptionStroke,
+          strokeWidth: settings.descriptionStrokeWidth,
+          outline: settings.descriptionOutline,
+          outlineWidth: settings.descriptionOutlineWidth,
+          shadow: settings.descriptionShadow,
+          align: settings.descriptionAlign,
+          bold: settings.descriptionBold,
+          maxLines: settings.descriptionMaxLines,
+          autoFit: settings.descriptionAutoFit,
+          ellipsis: settings.descriptionEllipsis,
+          embeddedFonts: input.embeddedFonts || [],
+        }),
+        settings.descriptionTextBox,
+      ),
+    );
+  }
+
+  const priceText = formatPrice(input.price, settings);
+  if (priceText) {
+    layers.push(
+      textLayer(
+        buildTextSvg({
+          text: priceText,
+          box: settings.priceTextBox,
+          font: settings.priceFont,
+          fontSize: settings.priceFontSize,
+          lineHeight: settings.priceLineHeight,
+          letterSpacing: settings.priceLetterSpacing,
+          color: settings.priceColor,
+          stroke: settings.priceStroke,
+          strokeWidth: settings.priceStrokeWidth,
+          outline: settings.priceOutline,
+          outlineWidth: settings.priceOutlineWidth,
+          shadow: settings.priceShadow,
+          align: settings.priceAlign,
+          bold: settings.priceBold,
+          maxLines: 3,
+          autoFit: true,
+          ellipsis: false,
+          embeddedFonts: input.embeddedFonts || [],
+        }),
+        settings.priceTextBox,
+      ),
+    );
+  }
+
+  for (const el of settings.customElements || []) {
+    if (!el.enabled) continue;
+    if (el.type === 'image') {
+      if (el.imagePath && fs.existsSync(el.imagePath)) layers.push(imageLayer(el.imagePath, el.box, 'contain'));
+      continue;
+    }
+    let text = el.staticText || '';
+    if (el.sheetColumn && input.sheetRow) {
+      const v = input.sheetRow[el.sheetColumn];
+      if (v) text = v;
+    }
+    if (input.sheetRow) text = text.replace(/\{([^}]+)\}/g, (_, k) => input.sheetRow?.[k] ?? '');
+    if (!text) continue;
+    if (el.uppercase) text = text.toUpperCase();
+    layers.push(
+      textLayer(
+        buildTextSvg({
+          text: normalizeBreaks(text),
+          box: el.box,
+          font: el.font || 'Arial',
+          fontSize: el.fontSize ?? 32,
+          lineHeight: 1.1,
+          letterSpacing: 0,
+          color: el.color || '#ffffff',
+          stroke: el.stroke || '#000000',
+          strokeWidth: el.strokeWidth ?? 0,
+          outline: '#000000',
+          outlineWidth: 0,
+          shadow: false,
+          align: el.align || 'center',
+          bold: !!el.bold,
+          maxLines: 4,
+          autoFit: true,
+          ellipsis: true,
+          embeddedFonts: input.embeddedFonts || [],
+        }),
+        el.box,
+      ),
+    );
+  }
+
+  layers.push(`</div>`);
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+html, body { margin: 0; width: ${settings.canvasWidth}px; height: ${settings.canvasHeight}px; overflow: hidden; background: #fff; }
+.canvas { position: relative; width: ${settings.canvasWidth}px; height: ${settings.canvasHeight}px; background: #fff; }
+.layer { position: absolute; overflow: hidden; }
+.layer img { width: 100%; height: 100%; display: block; }
+svg { display: block; overflow: hidden; }
+</style>
+</head>
+<body>${layers.join('\n')}</body>
+</html>`;
+}
+
+function imageLayer(file: string, box: Box, fit: 'cover' | 'contain'): string {
+  return `<div class="layer" style="${boxStyle(box)}"><img src="${escapeHtml(fileUrl(file))}" style="object-fit:${fit};"></div>`;
+}
+
+function textLayer(svg: string, box: Box): string {
+  return `<div class="layer" style="${boxStyle(box)}">${svg}</div>`;
+}
+
+function boxStyle(box: Box): string {
+  return `left:${box.x}px;top:${box.y}px;width:${Math.max(1, box.width)}px;height:${Math.max(1, box.height)}px;`;
+}
+
+function fileUrl(file: string): string {
+  return pathToFileURL(path.resolve(file)).toString();
+}
+
+function htmlDataUrl(html: string): string {
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+async function waitForImages(win: BrowserWindow): Promise<void> {
+  await win.webContents.executeJavaScript(`
+    Promise.all(Array.from(document.images).map((img) => {
+      if (img.complete) return Promise.resolve();
+      return new Promise((resolve) => {
+        img.onload = resolve;
+        img.onerror = resolve;
+      });
+    })).then(() => document.fonts ? document.fonts.ready : undefined)
+  `);
+}
+
 function fileMtime(file: string): number {
   if (!file || !fs.existsSync(file)) return 0;
   try {
@@ -358,13 +568,14 @@ function buildTextSvg(o: TextOpts): string {
     : '';
 
   const filterAttr = o.shadow ? ` filter="url(#shadow)"` : '';
-  const weight = o.bold ? 'bold' : 'normal';
+  const weight = o.bold ? 800 : 400;
   const letter = o.letterSpacing ? ` letter-spacing="${o.letterSpacing}"` : '';
+  const fontFamily = `&apos;${escapeXml(o.font)}&apos;, sans-serif`;
 
   const tspans = lines
     .map((line, i) => {
       const y = centerY + (i - (lines.length - 1) / 2) * lineH;
-      const common = `x="${xPos}" y="${y}" text-anchor="${anchor}" dominant-baseline="middle" font-family="${escapeXml(o.font)}" font-size="${fontSize}" font-weight="${weight}"${letter}${filterAttr}`;
+      const common = `x="${xPos}" y="${y}" text-anchor="${anchor}" dominant-baseline="middle" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${weight}"${letter}${filterAttr}`;
       const textOut = escapeXml(svgSpacePreserve(line));
       const outlineText =
         o.outlineWidth > 0
@@ -495,6 +706,10 @@ function escapeXml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+function escapeHtml(s: string): string {
+  return escapeXml(s);
 }
 
 function svgSpacePreserve(s: string): string {
