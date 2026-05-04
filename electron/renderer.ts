@@ -62,6 +62,8 @@ export async function renderAd(input: RenderInput): Promise<RenderResult> {
       color: settings.descriptionColor,
       stroke: settings.descriptionStroke,
       strokeWidth: settings.descriptionStrokeWidth,
+      outline: settings.descriptionOutline,
+      outlineWidth: settings.descriptionOutlineWidth,
       shadow: settings.descriptionShadow,
       align: settings.descriptionAlign,
       bold: settings.descriptionBold,
@@ -88,6 +90,8 @@ export async function renderAd(input: RenderInput): Promise<RenderResult> {
       color: settings.priceColor,
       stroke: settings.priceStroke,
       strokeWidth: settings.priceStrokeWidth,
+      outline: settings.priceOutline,
+      outlineWidth: settings.priceOutlineWidth,
       shadow: settings.priceShadow,
       align: settings.priceAlign,
       bold: settings.priceBold,
@@ -136,6 +140,8 @@ export async function renderAd(input: RenderInput): Promise<RenderResult> {
         color: el.color || '#ffffff',
         stroke: el.stroke || '#000000',
         strokeWidth: el.strokeWidth ?? 0,
+        outline: '#000000',
+        outlineWidth: 0,
         shadow: false,
         align: el.align || 'center',
         bold: !!el.bold,
@@ -272,6 +278,8 @@ interface TextOpts {
   color: string;
   stroke: string;
   strokeWidth: number;
+  outline: string;
+  outlineWidth: number;
   shadow: boolean;
   align: 'left' | 'center' | 'right';
   bold: boolean;
@@ -290,9 +298,10 @@ function buildTextSvg(o: TextOpts): string {
 
   let fontSize = o.fontSize;
   let lines = wrapText(o.text, W, fontSize, o.letterSpacing, o.bold);
+  const visualPad = Math.max(o.strokeWidth, o.outlineWidth) + 2;
   if (o.autoFit) {
     while (
-      (lines.length > o.maxLines || linesTooTall(lines.length, fontSize, o.lineHeight, H)) &&
+      (lines.length > o.maxLines || linesTooTall(lines.length, fontSize, o.lineHeight, H, visualPad)) &&
       fontSize > 8
     ) {
       fontSize -= 2;
@@ -313,8 +322,8 @@ function buildTextSvg(o: TextOpts): string {
   }
 
   const lineH = fontSize * o.lineHeight;
-  const totalH = lines.length * lineH;
-  const startY = (H - totalH) / 2 + fontSize * 0.85; // baseline of first line
+  const availableH = Math.max(1, H - visualPad * 2);
+  const centerY = visualPad + availableH / 2;
 
   const anchor = o.align === 'left' ? 'start' : o.align === 'right' ? 'end' : 'middle';
   const xPos = o.align === 'left' ? 0 : o.align === 'right' ? W : W / 2;
@@ -354,8 +363,15 @@ function buildTextSvg(o: TextOpts): string {
 
   const tspans = lines
     .map((line, i) => {
-      const y = startY + i * lineH;
-      return `<text x="${xPos}" y="${y}" text-anchor="${anchor}" font-family="${escapeXml(o.font)}" font-size="${fontSize}" font-weight="${weight}" fill="${o.color}" stroke="${o.stroke}" stroke-width="${o.strokeWidth}" paint-order="stroke"${letter}${filterAttr}>${escapeXml(line)}</text>`;
+      const y = centerY + (i - (lines.length - 1) / 2) * lineH;
+      const common = `x="${xPos}" y="${y}" text-anchor="${anchor}" dominant-baseline="middle" font-family="${escapeXml(o.font)}" font-size="${fontSize}" font-weight="${weight}"${letter}${filterAttr}`;
+      const textOut = escapeXml(svgSpacePreserve(line));
+      const outlineText =
+        o.outlineWidth > 0
+          ? `<text ${common} fill="none" stroke="${o.outline}" stroke-width="${o.outlineWidth}" stroke-linejoin="round" stroke-linecap="round" xml:space="preserve">${textOut}</text>`
+          : '';
+      const mainText = `<text ${common} fill="${o.color}" stroke="${o.stroke}" stroke-width="${o.strokeWidth}" stroke-linejoin="round" stroke-linecap="round" paint-order="stroke" xml:space="preserve">${textOut}</text>`;
+      return outlineText ? `${outlineText}\n${mainText}` : mainText;
     })
     .join('\n');
 
@@ -404,8 +420,14 @@ function wrapText(
   return out;
 }
 
-function linesTooTall(count: number, fontSize: number, lineHeight: number, boxH: number): boolean {
-  return count * fontSize * lineHeight > boxH;
+function linesTooTall(
+  count: number,
+  fontSize: number,
+  lineHeight: number,
+  boxH: number,
+  visualPad: number,
+): boolean {
+  return count * fontSize * lineHeight > Math.max(1, boxH - visualPad * 2);
 }
 
 function truncateWithEllipsis(
@@ -473,4 +495,9 @@ function escapeXml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+function svgSpacePreserve(s: string): string {
+  // Replace regular spaces so spacing survives font/browser quirks in SVG text.
+  return s.replace(/ /g, '\u00A0');
 }

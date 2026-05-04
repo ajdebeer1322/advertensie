@@ -41,6 +41,8 @@ export interface AppSettings {
   descriptionColor: string;
   descriptionStroke: string;
   descriptionStrokeWidth: number;
+  descriptionOutline: string;
+  descriptionOutlineWidth: number;
   descriptionShadow: boolean;
   descriptionAlign: 'left' | 'center' | 'right';
   descriptionUppercase: boolean;
@@ -56,6 +58,8 @@ export interface AppSettings {
   priceColor: string;
   priceStroke: string;
   priceStrokeWidth: number;
+  priceOutline: string;
+  priceOutlineWidth: number;
   priceShadow: boolean;
   priceAlign: 'left' | 'center' | 'right';
   priceBold: boolean;

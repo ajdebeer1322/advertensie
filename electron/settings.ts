@@ -46,6 +46,8 @@ export interface AppSettings {
   descriptionColor: string;
   descriptionStroke: string;
   descriptionStrokeWidth: number;
+  descriptionOutline: string;
+  descriptionOutlineWidth: number;
   descriptionShadow: boolean;
   descriptionAlign: 'left' | 'center' | 'right';
   descriptionUppercase: boolean;
@@ -62,6 +64,8 @@ export interface AppSettings {
   priceColor: string;
   priceStroke: string;
   priceStrokeWidth: number;
+  priceOutline: string;
+  priceOutlineWidth: number;
   priceShadow: boolean;
   priceAlign: 'left' | 'center' | 'right';
   priceBold: boolean;
@@ -148,6 +152,8 @@ const DEFAULTS: AppSettings = {
   descriptionColor: '#ffffff',
   descriptionStroke: '#000000',
   descriptionStrokeWidth: 0,
+  descriptionOutline: '#000000',
+  descriptionOutlineWidth: 0,
   descriptionShadow: false,
   descriptionAlign: 'center',
   descriptionUppercase: true,
@@ -163,6 +169,8 @@ const DEFAULTS: AppSettings = {
   priceColor: '#ffffff',
   priceStroke: '#000000',
   priceStrokeWidth: 0,
+  priceOutline: '#000000',
+  priceOutlineWidth: 0,
   priceShadow: false,
   priceAlign: 'center',
   priceBold: true,

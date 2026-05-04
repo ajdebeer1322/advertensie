@@ -100,6 +100,7 @@ export function PreviewPanel(p: Props) {
   // Side-panel state
   const [panelOpen, setPanelOpen] = useState(true);
   const [liveView, setLiveView] = useState(false);
+  const [snapEnabled, setSnapEnabled] = useState(true);
   const [openSection, setOpenSection] = useState<PanelSection>('description');
   const [active, setActive] = useState<BoxKey | null>('descriptionTextBox');
 
@@ -229,6 +230,13 @@ export function PreviewPanel(p: Props) {
           >
             Reset zoom
           </button>
+          <button
+            className={snapEnabled ? '' : 'secondary'}
+            onClick={() => setSnapEnabled((v) => !v)}
+            title={snapEnabled ? 'Disable snapping' : 'Enable snapping'}
+          >
+            {snapEnabled ? 'Snap on' : 'Snap off'}
+          </button>
           <span className="muted" title="Current preview zoom">
             {Math.round(zoomFactor * 100)}%
           </span>
@@ -329,6 +337,7 @@ export function PreviewPanel(p: Props) {
             showGuides={!liveView}
             resetZoomSignal={zoomResetSignal}
             onZoomChange={setZoomFactor}
+            snapEnabled={snapEnabled}
             onTelemetry={setTelemetry}
           />
         </div>
@@ -701,6 +710,11 @@ function DescriptionEditor({
             value={s.descriptionStroke}
             onChange={(v) => set('descriptionStroke', v)}
           />
+          <CF
+            label="Outline"
+            value={s.descriptionOutline}
+            onChange={(v) => set('descriptionOutline', v)}
+          />
         </InspectorInline>
         <InspectorPair>
           <InspectorSlider
@@ -713,6 +727,18 @@ function DescriptionEditor({
             unit="px"
             compact
           />
+          <InspectorSlider
+            label="Outline width"
+            value={s.descriptionOutlineWidth}
+            onChange={(v) => set('descriptionOutlineWidth', v)}
+            min={0}
+            max={16}
+            step={1}
+            unit="px"
+            compact
+          />
+        </InspectorPair>
+        <InspectorPair>
           <div className="inspector-checks inspector-checks-compact">
             <Chk
               label="Shadow"
@@ -817,6 +843,7 @@ function PriceEditor({
         <InspectorInline>
           <CF label="Color" value={s.priceColor} onChange={(v) => set('priceColor', v)} />
           <CF label="Stroke" value={s.priceStroke} onChange={(v) => set('priceStroke', v)} />
+          <CF label="Outline" value={s.priceOutline} onChange={(v) => set('priceOutline', v)} />
         </InspectorInline>
         <InspectorPair>
           <InspectorSlider
@@ -829,6 +856,18 @@ function PriceEditor({
             unit="px"
             compact
           />
+          <InspectorSlider
+            label="Outline width"
+            value={s.priceOutlineWidth}
+            onChange={(v) => set('priceOutlineWidth', v)}
+            min={0}
+            max={16}
+            step={1}
+            unit="px"
+            compact
+          />
+        </InspectorPair>
+        <InspectorPair>
           <div className="inspector-checks inspector-checks-compact">
             <Chk label="Shadow" value={s.priceShadow} onChange={(v) => set('priceShadow', v)} />
           </div>
@@ -1057,8 +1096,12 @@ function LiveFontSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
   const previewFont = hovered || value;
   const list = !options.includes(value) ? [value, ...options] : options;
+  const filtered = list.filter((font) =>
+    font.toLowerCase().includes(query.trim().toLowerCase()),
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -1066,6 +1109,14 @@ function LiveFontSelect({
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery('');
+      setHovered(null);
+      onPreview(null);
+    }
+  }, [open, onPreview]);
 
   return (
     <div className="font-picker" onClick={(e) => e.stopPropagation()}>
@@ -1100,7 +1151,17 @@ function LiveFontSelect({
             onPreview(null);
           }}
         >
-          {list.slice(0, 160).map((font) => (
+          <div style={{ position: 'sticky', top: 0, zIndex: 1, background: '#111318', paddingBottom: 6 }}>
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search fonts..."
+              autoFocus
+              style={{ minHeight: 30 }}
+            />
+          </div>
+          {filtered.slice(0, 200).map((font) => (
             <button
               key={font}
               type="button"
@@ -1127,6 +1188,11 @@ function LiveFontSelect({
               <span className="font-option-name">{font}</span>
             </button>
           ))}
+          {filtered.length === 0 && (
+            <div className="muted" style={{ padding: '8px 10px' }}>
+              No fonts found
+            </div>
+          )}
         </div>
       )}
     </div>

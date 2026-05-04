@@ -250,10 +250,20 @@ export function SettingsPanel({
                 value={s.descriptionStroke}
                 onChange={(v) => set('descriptionStroke', v)}
               />
+              <ColorField
+                label="Outline color"
+                value={s.descriptionOutline}
+                onChange={(v) => set('descriptionOutline', v)}
+              />
               <NumberField
                 label="Stroke width"
                 value={s.descriptionStrokeWidth}
                 onChange={(v) => set('descriptionStrokeWidth', v)}
+              />
+              <NumberField
+                label="Outline width"
+                value={s.descriptionOutlineWidth}
+                onChange={(v) => set('descriptionOutlineWidth', v)}
               />
               <SelectField
                 label="Align"
@@ -325,10 +335,20 @@ export function SettingsPanel({
                 value={s.priceStroke}
                 onChange={(v) => set('priceStroke', v)}
               />
+              <ColorField
+                label="Outline color"
+                value={s.priceOutline}
+                onChange={(v) => set('priceOutline', v)}
+              />
               <NumberField
                 label="Stroke width"
                 value={s.priceStrokeWidth}
                 onChange={(v) => set('priceStrokeWidth', v)}
+              />
+              <NumberField
+                label="Outline width"
+                value={s.priceOutlineWidth}
+                onChange={(v) => set('priceOutlineWidth', v)}
               />
               <SelectField
                 label="Align"

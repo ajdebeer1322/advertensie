@@ -79,6 +79,7 @@ interface Props {
   showGuides?: boolean;
   resetZoomSignal?: number;
   onZoomChange?: (zoom: number) => void;
+  snapEnabled?: boolean;
   onTelemetry?: (t: {
     source: 'editor-preview' | 'export-preview';
     pending: number;
@@ -120,6 +121,7 @@ export function InteractiveCanvas({
   showGuides = true,
   resetZoomSignal,
   onZoomChange,
+  snapEnabled = true,
   onTelemetry,
 }: Props) {
   const PAN_GUTTER = 320;
@@ -138,6 +140,7 @@ export function InteractiveCanvas({
     cacheSize: 0,
     lastLoadMs: 0,
   });
+  const [snapGuides, setSnapGuides] = useState<Array<{ axis: 'x' | 'y'; value: number }>>([]);
   const jobRef = useRef(0);
   const queuedPatchRef = useRef<Partial<AppSettings> | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -275,7 +278,20 @@ export function InteractiveCanvas({
       if (!d) return;
       const dx = (e.clientX - d.startX) / scale;
       const dy = (e.clientY - d.startY) / scale;
-      const next = computeNextBox(d.startBox, d.mode, dx, dy);
+      let next = computeNextBox(d.startBox, d.mode, dx, dy);
+      let guides: Array<{ axis: 'x' | 'y'; value: number }> = [];
+      if (snapEnabled && d.mode === 'move') {
+        const snapped = snapMoveBox(next, d.key, settings);
+        next = snapped.box;
+        guides = snapped.guides;
+      } else {
+        if (snapEnabled) {
+          const snapped = snapResizeBox(next, d.key, d.mode, settings);
+          next = snapped.box;
+          guides = snapped.guides;
+        }
+      }
+      setSnapGuides(guides);
       const patch: Partial<AppSettings> = makeBoxPatch(settings, d.key, next);
       // Resizing a text box scales the font size with box height
       if (d.mode !== 'move' && d.startFontSize && d.startBox.height > 0) {
@@ -300,6 +316,7 @@ export function InteractiveCanvas({
     };
     const onUp = () => {
       dragRef.current = null;
+      setSnapGuides([]);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -451,9 +468,14 @@ export function InteractiveCanvas({
             color={settings.descriptionColor}
             stroke={settings.descriptionStroke}
             strokeWidth={settings.descriptionStrokeWidth}
+            outline={settings.descriptionOutline}
+            outlineWidth={settings.descriptionOutlineWidth}
             shadow={settings.descriptionShadow}
             align={settings.descriptionAlign}
             bold={settings.descriptionBold}
+            maxLines={settings.descriptionMaxLines}
+            autoFit={settings.descriptionAutoFit}
+            ellipsis={settings.descriptionEllipsis}
           />
         )}
         {isEditorPreview && visible.priceTextBox !== false && livePrice && (
@@ -468,11 +490,44 @@ export function InteractiveCanvas({
             color={settings.priceColor}
             stroke={settings.priceStroke}
             strokeWidth={settings.priceStrokeWidth}
+            outline={settings.priceOutline}
+            outlineWidth={settings.priceOutlineWidth}
             shadow={settings.priceShadow}
             align={settings.priceAlign}
             bold={settings.priceBold}
+            maxLines={3}
+            autoFit
+            ellipsis={false}
           />
         )}
+        {snapEnabled &&
+          snapGuides.map((g, i) => (
+            <div
+              key={`${g.axis}-${g.value}-${i}`}
+              style={{
+                position: 'absolute',
+                pointerEvents: 'none',
+                zIndex: 2,
+                ...(g.axis === 'x'
+                  ? {
+                      left: g.value * scale,
+                      top: 0,
+                      bottom: 0,
+                      width: 1,
+                      background: 'rgba(56, 189, 248, 0.95)',
+                      boxShadow: '0 0 0 1px rgba(56, 189, 248, 0.25)',
+                    }
+                  : {
+                      top: g.value * scale,
+                      left: 0,
+                      right: 0,
+                      height: 1,
+                      background: 'rgba(56, 189, 248, 0.95)',
+                      boxShadow: '0 0 0 1px rgba(56, 189, 248, 0.25)',
+                    }),
+              }}
+            />
+          ))}
         {showGuides &&
           getAllBoxes(settings)
           .filter((b) => visible[b.key] !== false)
@@ -522,6 +577,147 @@ export function InteractiveCanvas({
   );
 }
 
+function snapMoveBox(
+  box: Box,
+  activeKey: BoxKey,
+  settings: AppSettings,
+): { box: Box; guides: Array<{ axis: 'x' | 'y'; value: number }> } {
+  const SNAP = 8; // canvas pixels
+  const guidesX: number[] = [0, settings.canvasWidth / 2, settings.canvasWidth];
+  const guidesY: number[] = [0, settings.canvasHeight / 2, settings.canvasHeight];
+
+  for (const def of getAllBoxes(settings)) {
+    if (def.key === activeKey) continue;
+    const b = getBoxValue(settings, def.key);
+    guidesX.push(b.x, b.x + b.width / 2, b.x + b.width);
+    guidesY.push(b.y, b.y + b.height / 2, b.y + b.height);
+  }
+
+  const left = box.x;
+  const centerX = box.x + box.width / 2;
+  const right = box.x + box.width;
+  const top = box.y;
+  const centerY = box.y + box.height / 2;
+  const bottom = box.y + box.height;
+
+  const snapX = pickBestSnap([left, centerX, right], guidesX, SNAP);
+  const snapY = pickBestSnap([top, centerY, bottom], guidesY, SNAP);
+
+  return {
+    box: {
+      ...box,
+      x: Math.round(box.x + snapX.delta),
+      y: Math.round(box.y + snapY.delta),
+    },
+    guides: [
+      ...(snapX.guide !== null ? [{ axis: 'x' as const, value: snapX.guide }] : []),
+      ...(snapY.guide !== null ? [{ axis: 'y' as const, value: snapY.guide }] : []),
+    ],
+  };
+}
+
+function pickBestSnap(
+  points: number[],
+  guides: number[],
+  threshold: number,
+): { delta: number; guide: number | null } {
+  let bestDelta = 0;
+  let bestGuide: number | null = null;
+  let bestAbs = threshold + 1;
+  for (const p of points) {
+    for (const g of guides) {
+      const d = g - p;
+      const ad = Math.abs(d);
+      if (ad <= threshold && ad < bestAbs) {
+        bestDelta = d;
+        bestGuide = g;
+        bestAbs = ad;
+      }
+    }
+  }
+  if (bestAbs <= threshold) return { delta: bestDelta, guide: bestGuide };
+  return { delta: 0, guide: null };
+}
+
+function snapResizeBox(
+  box: Box,
+  activeKey: BoxKey,
+  mode: DragMode,
+  settings: AppSettings,
+): { box: Box; guides: Array<{ axis: 'x' | 'y'; value: number }> } {
+  const SNAP = 8; // canvas pixels
+  const MIN_SIZE = 10;
+  const outGuides: Array<{ axis: 'x' | 'y'; value: number }> = [];
+
+  const guidesX: number[] = [0, settings.canvasWidth / 2, settings.canvasWidth];
+  const guidesY: number[] = [0, settings.canvasHeight / 2, settings.canvasHeight];
+  for (const def of getAllBoxes(settings)) {
+    if (def.key === activeKey) continue;
+    const b = getBoxValue(settings, def.key);
+    guidesX.push(b.x, b.x + b.width / 2, b.x + b.width);
+    guidesY.push(b.y, b.y + b.height / 2, b.y + b.height);
+  }
+
+  let left = box.x;
+  let top = box.y;
+  let right = box.x + box.width;
+  let bottom = box.y + box.height;
+
+  const movesLeft = mode === 'nw' || mode === 'sw' || mode === 'w';
+  const movesRight = mode === 'ne' || mode === 'se' || mode === 'e';
+  const movesTop = mode === 'nw' || mode === 'ne' || mode === 'n';
+  const movesBottom = mode === 'sw' || mode === 'se' || mode === 's';
+
+  if (movesLeft) {
+    const s = pickBestSnap([left], guidesX, SNAP);
+    if (s.delta) {
+      left += s.delta;
+      if (s.guide !== null) outGuides.push({ axis: 'x', value: s.guide });
+    }
+  }
+  if (movesRight) {
+    const s = pickBestSnap([right], guidesX, SNAP);
+    if (s.delta) {
+      right += s.delta;
+      if (s.guide !== null) outGuides.push({ axis: 'x', value: s.guide });
+    }
+  }
+  if (movesTop) {
+    const s = pickBestSnap([top], guidesY, SNAP);
+    if (s.delta) {
+      top += s.delta;
+      if (s.guide !== null) outGuides.push({ axis: 'y', value: s.guide });
+    }
+  }
+  if (movesBottom) {
+    const s = pickBestSnap([bottom], guidesY, SNAP);
+    if (s.delta) {
+      bottom += s.delta;
+      if (s.guide !== null) outGuides.push({ axis: 'y', value: s.guide });
+    }
+  }
+
+  // Keep minimum dimensions while preserving the anchored side.
+  if (right - left < MIN_SIZE) {
+    if (movesLeft && !movesRight) left = right - MIN_SIZE;
+    else right = left + MIN_SIZE;
+  }
+  if (bottom - top < MIN_SIZE) {
+    if (movesTop && !movesBottom) top = bottom - MIN_SIZE;
+    else bottom = top + MIN_SIZE;
+  }
+
+  return {
+    box: {
+      x: Math.round(left),
+      y: Math.round(top),
+      width: Math.round(right - left),
+      height: Math.round(bottom - top),
+    },
+    guides: outGuides,
+  };
+}
+
 function LiveTextLayer({
   box,
   scale,
@@ -533,9 +729,14 @@ function LiveTextLayer({
   color,
   stroke,
   strokeWidth,
+  outline,
+  outlineWidth,
   shadow,
   align,
   bold,
+  maxLines,
+  autoFit,
+  ellipsis,
 }: {
   box: Box;
   scale: number;
@@ -547,16 +748,37 @@ function LiveTextLayer({
   color: string;
   stroke: string;
   strokeWidth: number;
+  outline: string;
+  outlineWidth: number;
   shadow: boolean;
   align: 'left' | 'center' | 'right';
   bold: boolean;
+  maxLines: number;
+  autoFit: boolean;
+  ellipsis: boolean;
 }) {
   const W = Math.max(1, box.width);
   const H = Math.max(1, box.height);
-  const lines = text.split(/\n/);
-  const lineH = fontSize * lineHeight;
-  const totalH = lines.length * lineH;
-  const startY = (H - totalH) / 2 + fontSize * 0.85;
+  const layout = layoutTextLines({
+    text,
+    width: W,
+    height: H,
+    fontSize,
+    lineHeight,
+    letterSpacing,
+    bold,
+    maxLines,
+    autoFit,
+    ellipsis,
+    strokeWidth,
+    outlineWidth,
+  });
+  const lines = layout.lines;
+  const lineH = layout.lineH;
+  const drawFontSize = layout.fontSize;
+  const visualPad = Math.max(strokeWidth, outlineWidth) + 2;
+  const availableH = Math.max(1, H - visualPad * 2);
+  const centerY = visualPad + availableH / 2;
   const anchor = align === 'left' ? 'start' : align === 'right' ? 'end' : 'middle';
   const x = align === 'left' ? 0 : align === 'right' ? W : W / 2;
 
@@ -590,26 +812,156 @@ function LiveTextLayer({
         </defs>
       )}
       {lines.map((line, i) => (
-        <text
-          key={`${line}-${i}`}
-          x={x}
-          y={startY + i * lineH}
-          textAnchor={anchor}
-          fontFamily={`'${font}', sans-serif`}
-          fontSize={fontSize}
-          fontWeight={bold ? 800 : 400}
-          letterSpacing={letterSpacing}
-          fill={color}
-          stroke={stroke}
-          strokeWidth={strokeWidth}
-          paintOrder="stroke"
-          filter={shadow ? `url(#shadow-${box.x}-${box.y})` : undefined}
-        >
-          {line}
-        </text>
+        <g key={`${line}-${i}`}>
+          {outlineWidth > 0 && (
+            <text
+              x={x}
+              y={centerY + (i - (lines.length - 1) / 2) * lineH}
+              textAnchor={anchor}
+              dominantBaseline="middle"
+              fontFamily={`'${font}', sans-serif`}
+              fontSize={drawFontSize}
+              fontWeight={bold ? 800 : 400}
+              letterSpacing={letterSpacing}
+              fill="none"
+              stroke={outline}
+              strokeWidth={outlineWidth}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              filter={shadow ? `url(#shadow-${box.x}-${box.y})` : undefined}
+              xmlSpace="preserve"
+            >
+              {toSvgText(line)}
+            </text>
+          )}
+          <text
+            x={x}
+            y={centerY + (i - (lines.length - 1) / 2) * lineH}
+            textAnchor={anchor}
+            dominantBaseline="middle"
+            fontFamily={`'${font}', sans-serif`}
+            fontSize={drawFontSize}
+            fontWeight={bold ? 800 : 400}
+            letterSpacing={letterSpacing}
+            fill={color}
+            stroke={stroke}
+            strokeWidth={strokeWidth}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            paintOrder="stroke"
+            filter={shadow ? `url(#shadow-${box.x}-${box.y})` : undefined}
+            xmlSpace="preserve"
+          >
+            {toSvgText(line)}
+          </text>
+        </g>
       ))}
     </svg>
   );
+}
+
+function toSvgText(line: string): string {
+  // Use nbsp to avoid browsers/fonts collapsing or swallowing regular spaces.
+  return line.replace(/ /g, '\u00A0');
+}
+
+function approxCharWidth(fontSize: number, bold: boolean): number {
+  return fontSize * (bold ? 0.58 : 0.52);
+}
+
+function measureTextWidth(
+  text: string,
+  fontSize: number,
+  letterSpacing: number,
+  bold: boolean,
+): number {
+  return text.length * (approxCharWidth(fontSize, bold) + letterSpacing);
+}
+
+function wrapTextLines(
+  text: string,
+  width: number,
+  fontSize: number,
+  letterSpacing: number,
+  bold: boolean,
+): string[] {
+  const paragraphs = text.split(/\n/);
+  const out: string[] = [];
+  for (const para of paragraphs) {
+    const words = para.split(/\s+/).filter(Boolean);
+    let current = '';
+    for (const w of words) {
+      const candidate = current ? `${current} ${w}` : w;
+      if (measureTextWidth(candidate, fontSize, letterSpacing, bold) <= width) current = candidate;
+      else {
+        if (current) out.push(current);
+        current = w;
+      }
+    }
+    if (current) out.push(current);
+    if (words.length === 0) out.push('');
+  }
+  return out;
+}
+
+function linesTooTall(count: number, fontSize: number, lineHeight: number, boxH: number, pad: number): boolean {
+  return count * fontSize * lineHeight > Math.max(1, boxH - pad * 2);
+}
+
+function truncateWithEllipsis(
+  line: string,
+  width: number,
+  fontSize: number,
+  letterSpacing: number,
+  bold: boolean,
+): string {
+  let s = line;
+  while (s.length > 1 && measureTextWidth(`${s}...`, fontSize, letterSpacing, bold) > width) {
+    s = s.slice(0, -1);
+  }
+  return `${s}...`;
+}
+
+function layoutTextLines(opts: {
+  text: string;
+  width: number;
+  height: number;
+  fontSize: number;
+  lineHeight: number;
+  letterSpacing: number;
+  bold: boolean;
+  maxLines: number;
+  autoFit: boolean;
+  ellipsis: boolean;
+  strokeWidth: number;
+  outlineWidth: number;
+}): { lines: string[]; fontSize: number; lineH: number } {
+  let size = opts.fontSize;
+  const visualPad = Math.max(opts.strokeWidth, opts.outlineWidth) + 2;
+  let lines = wrapTextLines(opts.text, opts.width, size, opts.letterSpacing, opts.bold);
+  if (opts.autoFit) {
+    while (
+      (lines.length > opts.maxLines ||
+        linesTooTall(lines.length, size, opts.lineHeight, opts.height, visualPad)) &&
+      size > 8
+    ) {
+      size -= 2;
+      lines = wrapTextLines(opts.text, opts.width, size, opts.letterSpacing, opts.bold);
+    }
+  }
+  if (lines.length > opts.maxLines) {
+    lines = lines.slice(0, opts.maxLines);
+    if (opts.ellipsis && lines.length > 0) {
+      lines[lines.length - 1] = truncateWithEllipsis(
+        lines[lines.length - 1],
+        opts.width,
+        size,
+        opts.letterSpacing,
+        opts.bold,
+      );
+    }
+  }
+  return { lines, fontSize: size, lineH: size * opts.lineHeight };
 }
 
 function EditorBase({

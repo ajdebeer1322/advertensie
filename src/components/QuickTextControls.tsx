@@ -72,10 +72,23 @@ export function QuickTextControls({ settings: s, allFonts, onChange }: Props) {
                 onChange={(e) => set('descriptionStroke', e.target.value)}
               />
             </Row>
+            <Row label="Outline color">
+              <input
+                type="color"
+                value={s.descriptionOutline}
+                onChange={(e) => set('descriptionOutline', e.target.value)}
+              />
+            </Row>
             <Row label="Stroke width">
               <Num
                 value={s.descriptionStrokeWidth}
                 onChange={(v) => set('descriptionStrokeWidth', v)}
+              />
+            </Row>
+            <Row label="Outline width">
+              <Num
+                value={s.descriptionOutlineWidth}
+                onChange={(v) => set('descriptionOutlineWidth', v)}
               />
             </Row>
             <Row label="Align">
@@ -161,10 +174,23 @@ export function QuickTextControls({ settings: s, allFonts, onChange }: Props) {
                 onChange={(e) => set('priceStroke', e.target.value)}
               />
             </Row>
+            <Row label="Outline color">
+              <input
+                type="color"
+                value={s.priceOutline}
+                onChange={(e) => set('priceOutline', e.target.value)}
+              />
+            </Row>
             <Row label="Stroke width">
               <Num
                 value={s.priceStrokeWidth}
                 onChange={(v) => set('priceStrokeWidth', v)}
+              />
+            </Row>
+            <Row label="Outline width">
+              <Num
+                value={s.priceOutlineWidth}
+                onChange={(v) => set('priceOutlineWidth', v)}
               />
             </Row>
             <Row label="Align">
