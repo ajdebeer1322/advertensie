@@ -300,7 +300,12 @@ export default function App() {
         desc = settings.demoDescription;
         price = settings.demoPrice;
       } else if (settings.dataSource === 'sheet') {
-        const row = findRow(sheetRows, item.name, settings.keyColumn, settings.caseSensitiveMatch);
+        const row = findRow(
+          sheetRows,
+          item.name,
+          settings.keyColumn,
+          settings.caseSensitiveMatch,
+        );
         if (!row) {
           const reason = 'No matching sheet row';
           skipped.push({ imagePath: item.path, reason });
